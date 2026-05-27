@@ -517,13 +517,10 @@ int main(int argc, char* argv[])
         std::vector<int> goz_face_to_cgal_offset;
         load_goz_to_cgal(in_goz, mesh, face_to_goz_face, goz_face_to_cgal_offset);
     }
-    else
+    else if (zero_arg_mode)
     {
-        // Read OBJ as polygon soup, repair (merge duplicate vertices, drop
-        // degenerate/duplicate polygons), orient, then convert to a Surface_mesh.
-        // This is the only way ZBrush-exported OBJs (which often have
-        // un-stitched per-face vertices) become a manifold mesh that CGAL can
-        // detect borders on.
+        //ZScript path: ZBrush Tool:Export writes un-stitched per-face vertices.
+        //polygon_soup repair merges duplicate vertices so CGAL can see borders.
         std::vector<Point> soup_points;
         std::vector<std::vector<std::size_t>> soup_polys;
         if (!CGAL::IO::read_polygon_soup(in_path, soup_points, soup_polys))
@@ -559,11 +556,28 @@ int main(int argc, char* argv[])
             PMP::triangulate_faces(mesh);
         }
 
-        // Stitch any remaining duplicate boundary edges (extra safety).
         PMP::stitch_borders(mesh);
 
         std::cout << "OBJ Input (final): " << mesh.number_of_vertices()
                   << " vertices, " << mesh.number_of_faces() << " faces" << std::endl;
+    }
+    else
+    {
+        //Python / CLI path: original read_OBJ, preserves quads and structure.
+        std::ifstream in(in_path);
+        if (!in || !CGAL::IO::read_OBJ(in, mesh))
+        {
+            std::cerr << "ERROR: Cannot read input as OBJ: " << in_path << std::endl;
+            pause_if_needed();
+            return 1;
+        }
+        std::cout << "OBJ Input: " << mesh.number_of_vertices() << " vertices, "
+                  << mesh.number_of_faces() << " faces" << std::endl;
+        if (!CGAL::is_triangle_mesh(mesh))
+        {
+            std::cout << "Triangulating non-triangle faces..." << std::endl;
+            PMP::triangulate_faces(mesh);
+        }
     }
 
     write_progress(0.10f);
