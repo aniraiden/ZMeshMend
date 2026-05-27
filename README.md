@@ -27,7 +27,7 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 
 ## Python 版安装
 
-1. 将仓库放置在电脑上任意位置（无需放入 ZBrush 插件目录）。
+1. 将文件夹放置在电脑上任意位置（无需放入 ZBrush 插件目录）。
 
 2. 在 ZBrush 中：菜单 `ZScript` → `Python Scripting` → `Load`
    选择 `ZMeshMend_Launcher.py`
@@ -38,14 +38,14 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 
 ## ZScript 版安装
 
-1. 将 `ZMeshMend/ZMeshMend_ZScript.txt` 和 `ZMeshMendData/` 文件夹复制到：
+1. 将 `ZMeshMend` 文件夹复制到：
    ```
    C:\Program Files\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\
    ```
 
    最终结构：
    ```
-   ZStartup\ZPlugs64\
+   ZStartup\ZPlugs64\ZMeshMend\
      ZMeshMend_ZScript.txt
      ZMeshMendData\
        zmeshmend_core.exe
