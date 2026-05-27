@@ -406,11 +406,12 @@ int main(int argc, char* argv[])
     bool write_fill_only = false;
     double opt_min_frac  = 0.0;
     int    opt_min_faces = 0;
-    bool   opt_full_obj  = true;
+    bool   opt_full_obj  = false;
 
     if (argc < 3)
     {
         zero_arg_mode = true;
+        opt_full_obj  = true;
 #ifdef _WIN32
         AllocConsole();
         freopen("CONOUT$", "w", stdout);
