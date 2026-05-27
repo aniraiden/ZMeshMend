@@ -518,47 +518,22 @@ int main(int argc, char* argv[])
     }
     else if (zero_arg_mode)
     {
-        //ZScript path: ZBrush Tool:Export writes un-stitched per-face vertices.
-        //polygon_soup repair merges duplicate vertices so CGAL can see borders.
-        std::vector<Point> soup_points;
-        std::vector<std::vector<std::size_t>> soup_polys;
-        if (!CGAL::IO::read_polygon_soup(in_path, soup_points, soup_polys))
+        //ZScript path: ZBrush Tool:Export writes un-stitched OBJs.
+        //Use read_OBJ + stitch_borders to merge duplicate vertices,
+        //preserving quads so original faces stay in their original form.
+        std::ifstream zin(in_path);
+        if (!zin || !CGAL::IO::read_OBJ(zin, mesh))
         {
-            std::cerr << "ERROR: Cannot read OBJ as polygon soup: " << in_path << std::endl;
+            std::cerr << "ERROR: Cannot read OBJ: " << in_path << std::endl;
             pause_if_needed();
             return 1;
         }
-        std::cout << "OBJ soup: " << soup_points.size() << " vertices, "
-                  << soup_polys.size() << " polygons" << std::endl;
-
-        PMP::repair_polygon_soup(soup_points, soup_polys);
-        std::cout << "After repair: " << soup_points.size() << " vertices, "
-                  << soup_polys.size() << " polygons" << std::endl;
-
-        if (!PMP::orient_polygon_soup(soup_points, soup_polys))
-        {
-            std::cout << "WARNING: orient_polygon_soup found non-orientable patches." << std::endl;
-        }
-
-        if (!PMP::is_polygon_soup_a_polygon_mesh(soup_polys))
-        {
-            std::cerr << "ERROR: polygon soup is not a valid polygon mesh after repair." << std::endl;
-            pause_if_needed();
-            return 1;
-        }
-
-        PMP::polygon_soup_to_polygon_mesh(soup_points, soup_polys, mesh);
-
-        if (!CGAL::is_triangle_mesh(mesh))
-        {
-            std::cout << "Triangulating non-triangle faces..." << std::endl;
-            PMP::triangulate_faces(mesh);
-        }
+        std::cout << "OBJ Input: " << mesh.number_of_vertices() << " vertices, "
+                  << mesh.number_of_faces() << " faces" << std::endl;
 
         PMP::stitch_borders(mesh);
-
-        std::cout << "OBJ Input (final): " << mesh.number_of_vertices()
-                  << " vertices, " << mesh.number_of_faces() << " faces" << std::endl;
+        std::cout << "After stitch: " << mesh.number_of_vertices() << " vertices, "
+                  << mesh.number_of_faces() << " faces" << std::endl;
     }
     else
     {
@@ -613,23 +588,30 @@ int main(int argc, char* argv[])
                     out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
                     vidx[v] = ++vcount;
                 }
-                out << "g group_1\n";
-                std::size_t fcount = 0;
-                for (auto f : mesh.faces())
+                //Parse original OBJ to preserve PolyGroups via g-lines.
                 {
-                    out << 'f';
-                    auto h0 = mesh.halfedge(f);
-                    auto h = h0;
-                    do
+                    std::ifstream gs(in_path);
+                    std::string line, cur = "orig", last_g;
+                    size_t fi = 0;
+                    while (std::getline(gs, line))
                     {
-                        out << ' ' << vidx[mesh.target(h)];
-                        h = mesh.next(h);
-                    } while (h != h0);
-                    out << '\n';
-                    ++fcount;
+                        if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
+                            cur = line.substr(2);
+                        else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
+                        {
+                            Mesh::Face_index mf(fi);
+                            if (fi == 0 || cur != last_g) { out << "g " << cur << '\n'; last_g = cur; }
+                            out << 'f';
+                            auto h0 = mesh.halfedge(mf);
+                            auto h = h0;
+                            do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
+                            out << '\n';
+                            ++fi;
+                        }
+                    }
                 }
                 std::cout << "Output: " << out_path << " (full mesh OBJ, watertight)" << std::endl;
-                std::cout << "Vertices: " << vcount << ", Faces: " << fcount << std::endl;
+                std::cout << "Vertices: " << vcount << ", Faces: " << mesh.number_of_faces() << std::endl;
                 write_progress(1.0f);
                 std::cout << "SUCCESS (watertight, full OBJ)" << std::endl;
                 pause_if_needed();
@@ -865,7 +847,7 @@ int main(int argc, char* argv[])
                 pause_if_needed();
                 return 1;
             }
-            out << "# ZMeshMend full mesh (PolyGroup as 'g group_N')\n";
+            out << "# ZMeshMend full mesh (PolyGroup preserved + fill)\n";
 
             // Rebuild a vertex index map (skip removed vertices/faces).
             std::map<Mesh::Vertex_index, std::size_t> vidx;
@@ -877,33 +859,57 @@ int main(int argc, char* argv[])
                 vidx[v] = ++vcount;
             }
 
-            // Group faces by ZMeshMend tag: 1=original, 2=fill.
-            // Faces not in original_faces are fill (newly created during stitching).
-            // We emit all original faces first under "g group_1", then fill under "g group_2".
-            auto emit_group = [&](int gid, bool fill) {
-                bool first = true;
+            //Parse original OBJ g-lines: after read_OBJ + stitch_borders,
+            //CGAL face index i == i-th face line in the OBJ (0-based).
+            std::vector<std::string> orig_groups;
+            {
+                std::ifstream gs(in_path);
+                std::string line, cur = "orig";
+                while (std::getline(gs, line))
+                {
+                    if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
+                        cur = line.substr(2);
+                    else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
+                        orig_groups.push_back(cur);
+                }
+            }
+
+            //Collect fill faces separately.
+            std::vector<Mesh::Face_index> fill_faces;
+            for (auto f : mesh.faces())
+                if (original_faces.find(f) == original_faces.end())
+                    fill_faces.push_back(f);
+
+            //Emit original faces: group by original g-group name.
+            {
+                std::string last_g;
                 for (auto f : mesh.faces())
                 {
-                    bool is_orig = (original_faces.find(f) != original_faces.end());
-                    if (fill ? is_orig : !is_orig) continue;
-                    if (first)
-                    {
-                        out << "g group_" << gid << '\n';
-                        first = false;
-                    }
+                    if (original_faces.find(f) == original_faces.end()) continue;
+                    size_t fidx = (size_t)f;
+                    std::string gname = (fidx < orig_groups.size()) ? orig_groups[fidx] : "orig";
+                    if (gname != last_g) { out << "g " << gname << '\n'; last_g = gname; }
                     out << 'f';
                     auto h0 = mesh.halfedge(f);
                     auto h = h0;
-                    do
-                    {
-                        out << ' ' << vidx[mesh.target(h)];
-                        h = mesh.next(h);
-                    } while (h != h0);
+                    do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
                     out << '\n';
                 }
-            };
-            emit_group(1, /*fill=*/false);
-            emit_group(2, /*fill=*/true);
+            }
+
+            //Emit fill faces under a separate group.
+            if (!fill_faces.empty())
+            {
+                out << "g ZMeshMend_Fill\n";
+                for (auto f : fill_faces)
+                {
+                    out << 'f';
+                    auto h0 = mesh.halfedge(f);
+                    auto h = h0;
+                    do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
+                    out << '\n';
+                }
+            }
 
             std::cout << "Output: " << out_path << " (full mesh OBJ + PolyGroups)" << std::endl;
             std::cout << "Vertices: " << vcount << ", Faces: " << mesh.number_of_faces() << std::endl;
