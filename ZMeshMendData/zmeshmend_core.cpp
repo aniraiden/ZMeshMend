@@ -396,13 +396,6 @@ int main(int argc, char* argv[])
             char* slash = strrchr(self, '\\');
             if (slash) { *slash = '\0'; SetCurrentDirectoryA(self); }
         }
-        AllocConsole();
-        freopen("CONOUT$", "w", stdout);
-        freopen("CONOUT$", "w", stderr);
-    }
-    {
-        FILE* s = fopen("zmeshmend_startup.log", "w");
-        if (s) { fprintf(s, "started\n"); fclose(s); }
     }
 #endif
     bool zero_arg_mode = false;
@@ -418,6 +411,15 @@ int main(int argc, char* argv[])
     if (argc < 3)
     {
         zero_arg_mode = true;
+#ifdef _WIN32
+        AllocConsole();
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+#endif
+        {
+            FILE* s = fopen("zmeshmend_startup.log", "w");
+            if (s) { fprintf(s, "started\n"); fclose(s); }
+        }
         //ZCloseHoles mode: read everything from zmeshmend_config.txt,
         //input = zmeshmend_export.obj, output = zmeshmend_import.obj.
         in_path  = "zmeshmend_export.obj";
