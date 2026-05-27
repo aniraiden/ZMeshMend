@@ -10,10 +10,9 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 |---|---|---|
 | 文件 | `ZMeshMend/ZMeshMend.py` | `ZMeshMend/ZMeshMend_ZScript.txt` |
 | 入口 | `ZMeshMend_Launcher.py` | 直接 Load .txt |
-| 依赖 | ZBrush Python API | ZFileUtils64.dll |
-| 兼容 | ZBrush 2021+ | ZBrush 2021+（含老版本） |
+| 依赖 | ZBrush Python API (2026+) | ZFileUtils64.dll |
+| 兼容 | ZBrush 2026+ | ZBrush 2021+（含老版本） |
 | CGAL 核心 | subprocess 调用 | LaunchAppWithFile 调用 |
-| Release | `Release/Python_v1.0.0/` | `Release/ZScript_v1.0.0/` |
 
 ## 功能
 
@@ -28,15 +27,14 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 
 ## Python 版安装
 
-1. 将整个仓库复制到 ZBrush 插件目录：
-   ```
-   C:\Program Files\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\
-   ```
+1. 将仓库放置在电脑上任意位置（无需放入 ZBrush 插件目录）。
 
 2. 在 ZBrush 中：菜单 `ZScript` → `Python Scripting` → `Load`
    选择 `ZMeshMend_Launcher.py`
 
 3. 插件面板将自动出现在 ZBrush UI 中。
+
+> Python 版要求 ZBrush 2026 及以上版本。
 
 ## ZScript 版安装
 
@@ -129,7 +127,7 @@ ZMeshMend/
 
 ## 依赖
 
-- **Python 版:** ZBrush Python API（`zbrush` 模块）
+- **Python 版:** ZBrush 2026+ Python API（`zbrush` 模块）
 - **ZScript 版:** ZFileUtils64.dll（内置）
 - **C++ 核心:** CGAL 5.x, Boost 1.74+, Eigen3, GMP, MPFR
 
