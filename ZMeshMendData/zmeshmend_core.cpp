@@ -387,17 +387,6 @@ static void build_goz_from_cgal(const Mesh& mesh,
 
 int main(int argc, char* argv[])
 {
-#ifdef _WIN32
-    {
-        char self[MAX_PATH];
-        DWORD n = GetModuleFileNameA(NULL, self, MAX_PATH);
-        if (n > 0 && n < MAX_PATH)
-        {
-            char* slash = strrchr(self, '\\');
-            if (slash) { *slash = '\0'; SetCurrentDirectoryA(self); }
-        }
-    }
-#endif
     bool zero_arg_mode = false;
     std::string in_path;
     std::string out_path;
@@ -413,6 +402,15 @@ int main(int argc, char* argv[])
         zero_arg_mode = true;
         opt_full_obj  = true;
 #ifdef _WIN32
+        {
+            char self[MAX_PATH];
+            DWORD n = GetModuleFileNameA(NULL, self, MAX_PATH);
+            if (n > 0 && n < MAX_PATH)
+            {
+                char* slash = strrchr(self, '\\');
+                if (slash) { *slash = '\0'; SetCurrentDirectoryA(self); }
+            }
+        }
         AllocConsole();
         freopen("CONOUT$", "w", stdout);
         freopen("CONOUT$", "w", stderr);
