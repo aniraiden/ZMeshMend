@@ -451,6 +451,8 @@ int main(int argc, char* argv[])
     }
     else
     {
+    in_path = argv[1];
+    out_path = argv[2];
     for (int i = 3; i < argc; ++i)
     {
         std::string a = argv[i];
