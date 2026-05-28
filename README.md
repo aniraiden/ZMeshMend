@@ -49,14 +49,14 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 
 ## ZScript 版安装
 
-1. 将 `ZMeshMend` 文件夹复制到：
+1. 将 `ZMeshMend` 文件夹中的内容复制到：
    ```
-   X:\...\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\ZMeshMend\
+   X:\...\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\
    ```
 
    最终结构：
    ```
-   ZStartup\ZPlugs64\ZMeshMend\
+   ZStartup\ZPlugs64\
      ZMeshMend_ZScript.txt
      ZMeshMendData\
        zmeshmend_core.exe
@@ -207,14 +207,14 @@ Visit [GitHub Releases](https://github.com/aniraiden/ZMeshMend/releases) to down
 
 ## ZScript Version Installation
 
-1. Copy the `ZMeshMend` folder to:
+1. Copy the contents of `ZMeshMend` folder, to:
    ```
-   X:\...\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\ZMeshMend\
+   X:\...\Maxon\ZBrush 20XX\ZStartup\ZPlugs64\
    ```
 
    Final structure:
    ```
-   ZStartup\ZPlugs64\ZMeshMend\
+   ZStartup\ZPlugs64\
      ZMeshMend_ZScript.txt
      ZMeshMendData\
        zmeshmend_core.exe
