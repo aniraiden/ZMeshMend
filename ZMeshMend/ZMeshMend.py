@@ -1,15 +1,15 @@
-"""ZMeshMend - ZBrush Python Plugin
+"""ZMeshMend - ZBrush Python 插件
 =============================
 
-Automatically closes all open holes on the current mesh.
-Rebuilt from the original ZMeshMend plugin using ZBrush Python API.
+自动闭合当前网格上的所有开放孔洞。
+基于原 ZMeshMend 插件用 ZBrush Python API 重写。
 
-Core Features:
-  1. Auto-close all holes
-  2. Remove small disconnected fragments / mesh debris
-  3. Create new PolyGroup for filled areas
-  4. Auto-mask newly closed area
-  5. Support mesh cleanup based on existing ZBrush mask
+核心功能：
+  1. 自动闭合所有孔洞
+  2. 移除小型分离碎片 / 网格碎屑
+  3. 为填充区域创建新 PolyGroup
+  4. 自动遮罩新闭合的区域
+  5. 支持基于 ZBrush 遮罩的网格清理
 """
 
 __author__ = "ZMeshMend Rebuild"
@@ -47,16 +47,16 @@ CONFIG = {
 }
 
 _config_comment_map = {
-    "removeSmallFragments": "Remove small disconnected fragments (1=yes, 0=no)",
-    "fragmentMinFraction": "Minimum fraction of total faces to keep a fragment",
-    "fragmentMinFaces": "Minimum absolute face count to keep a fragment",
-    "maskGrowRings": "Number of rings to grow mask before deletion",
-    "maskSharpenPasses": "Number of mask sharpen passes before grow",
+    "removeSmallFragments": "移除小型分离碎片（1=是, 0=否）",
+    "fragmentMinFraction": "保留碎片所需的最小面数占比",
+    "fragmentMinFaces": "保留碎片所需的最小绝对面数",
+    "maskGrowRings": "删除前扩展遮罩的环数",
+    "maskSharpenPasses": "扩展前锐化遮罩的遍数",
 }
 
 
 def load_config():
-    """Load configuration from ZMeshMend_config.txt"""
+    """从 ZMeshMend_config.txt 加载配置"""
     global CONFIG
     if not os.path.exists(CONFIG_PATH):
         save_config()
@@ -79,15 +79,15 @@ def load_config():
                         elif isinstance(CONFIG[key], float):
                             CONFIG[key] = float(val)
     except Exception as e:
-        _log(f"Warning: load_config failed: {e}")
+        _log(f"警告：load_config 失败：{e}")
 
 
 def save_config():
-    """Save current configuration to ZMeshMend_config.txt"""
+    """保存当前配置到 ZMeshMend_config.txt"""
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.write("# ZMeshMend Configuration\n")
-            f.write("# Edit values as needed.\n\n")
+            f.write("# ZMeshMend 配置文件\n")
+            f.write("# 按需修改参数。\n\n")
             for key, default in CONFIG.items():
                 comment = _config_comment_map.get(key, "")
                 if comment:
@@ -100,11 +100,11 @@ def save_config():
                     f.write(f"{key}={CONFIG[key]}\n")
                 f.write("\n")
     except Exception as e:
-        _log(f"Warning: save_config failed: {e}")
+        _log(f"警告：save_config 失败：{e}")
 
 
 def _cgal_available():
-    """Check if the CGAL core executable exists"""
+    """检查 CGAL 核心可执行文件是否存在"""
     global _cgal_available_cache
     if _cgal_available_cache is None:
         _cgal_available_cache = os.path.exists(_CGAL_EXE_PATH)
@@ -112,12 +112,12 @@ def _cgal_available():
 
 
 def _call_cgal_fill(input_obj, output_goz, fill_goz=None, debug_obj=None):
-    """Call CGAL core EXE to fill holes. Output is GoZ format with PolyGroups.
+    """调用 CGAL 核心 EXE 填充孔洞。输出为带 PolyGroup 的 GoZ 格式。
 
-    Input can be OBJ or GoZ. Output is always GoZ with PolyGroups.
-    If debug_obj is provided, a verification OBJ is also written alongside GoZ.
+    输入可为 OBJ 或 GoZ。输出始终为带 PolyGroup 的 GoZ。
+    如提供 debug_obj，将同时写入一个验证用 OBJ。
 
-    Returns (success, faces_added). Faces_added is -1 if no parsing possible.
+    返回 (成功, faces_added)。faces_added 为 -1 表示无法解析。
     """
     args = [_CGAL_EXE_PATH, input_obj, output_goz]
     if fill_goz:
@@ -160,93 +160,93 @@ def _call_cgal_fill(input_obj, output_goz, fill_goz=None, debug_obj=None):
                             pass
 
         if p.returncode != 0:
-            _log(f"  [CGAL] EXE returned error code {p.returncode}")
+            _log(f"  [CGAL] EXE 返回错误码 {p.returncode}")
             return False, faces_added
 
         if not os.path.exists(output_goz):
-            _log(f"  [CGAL] Output file not created")
+            _log(f"  [CGAL] 输出文件未创建")
             return False, faces_added
 
         return True, faces_added
 
     except FileNotFoundError:
-        _log(f"  [CGAL] EXE not found at: {_CGAL_EXE_PATH}")
+        _log(f"  [CGAL] 未找到 EXE：{_CGAL_EXE_PATH}")
         return False, -1
     except subprocess.TimeoutExpired:
-        _log(f"  [CGAL] EXE timed out after 300s")
+        _log(f"  [CGAL] EXE 超时（300 秒）")
         return False, -1
     except Exception as e:
-        _log(f"  [CGAL] Error: {e}")
+        _log(f"  [CGAL] 错误：{e}")
         return False, -1
 
 
 def _ui_path(relative):
-    """Build full UI path relative to plugin palette"""
+    """根据插件面板构建完整 UI 路径"""
     return f"{PALETTE_NAME}:{relative}"
 
 
 def _log(msg):
-    """Print a message to the ZBrush console"""
+    """打印消息到 ZBrush 控制台"""
     print(f"[ZMeshMend] {msg}")
 
 
 def _progress(text, value=0.0):
-    """Update the notebar progress display"""
+    """更新记事条进度显示"""
     zbc.set_notebar_text(f"ZMeshMend: {text}", value)
 
 
 def _clear_progress():
-    """Clear the notebar"""
+    """清除记事条"""
     zbc.set_notebar_text("", 0)
 
 
 def _ensure_edit_mode():
-    """Ensure we are in edit mode with an active polymesh tool"""
+    """确保处于编辑模式且有活动的 polymesh 工具"""
     try:
         if zbc.is_polymesh3d_solid():
             return True
     except Exception as e:
-        _log(f"Warning: is_polymesh3d_solid check failed: {e}")
+        _log(f"警告：is_polymesh3d_solid 检查失败：{e}")
 
     try:
         pt = zbc.query_mesh3d(0)
         if pt and pt[0] > 0:
             return True
     except Exception as e:
-        _log(f"Warning: query_mesh3d check failed: {e}")
+        _log(f"警告：query_mesh3d 检查失败：{e}")
 
     zbc.message_ok(
-        "No active PolyMesh3D tool found.\n\n"
-        "Please select a 3D tool and enter Edit mode first.",
-        "ZMeshMend - Error"
+        "未找到活动的 PolyMesh3D 工具。\n\n"
+        "请先选择一个 3D 工具并进入编辑模式。",
+        "ZMeshMend - 错误"
     )
     return False
 
 
 def _get_vertex_count():
-    """Get current mesh vertex count"""
+    """获取当前网格顶点数"""
     try:
         result = zbc.query_mesh3d(0)
         if result:
             return int(result[0])
     except Exception as e:
-        _log(f"Warning: _get_vertex_count failed: {e}")
+        _log(f"警告：_get_vertex_count 失败：{e}")
     return 0
 
 
 def _get_face_count():
-    """Get current mesh face count"""
+    """获取当前网格面数"""
     try:
         result = zbc.query_mesh3d(1)
         if result:
             return int(result[0])
     except Exception as e:
-        _log(f"Warning: _get_face_count failed: {e}")
+        _log(f"警告：_get_face_count 失败：{e}")
     return 0
 
 
 def _sharpen_mask(count=1):
-    """Sharpen the current mask N times"""
+    """锐化当前遮罩 N 次"""
     for i in range(count):
         try:
             zbc.press("Tool:Masking:SharpenMask")
@@ -254,24 +254,24 @@ def _sharpen_mask(count=1):
             try:
                 zbc.press("Tool:Masking:Sharpen")
             except Exception:
-                _log("Warning: Could not sharpen mask (button path may differ in this ZBrush version)")
+                _log("警告：无法锐化遮罩（此 ZBrush 版本的按钮路径可能不同）")
                 break
 
 
 def _grow_mask(rings=1):
-    """Grow the current mask by N rings"""
+    """扩展当前遮罩 N 环"""
     try:
         for i in range(rings):
             zbc.press("Tool:Masking:GrowMask")
     except Exception:
-        _log("Warning: Could not grow mask (button path may differ)")
+        _log("警告：无法扩展遮罩（按钮路径可能不同）")
 
 
 def _hide_masked():
-    """Hide points based on the current mask state.
+    """根据当前遮罩状态隐藏点。
 
-    Note: ZBrush's HidePt button hides UNMASKED points (mask = protected).
-    Caller must invert the mask first if it wants to hide the masked region.
+    注意：ZBrush 的 HidePt 按钮隐藏未遮罩的点（遮罩 = 保护）。
+    调用者如需隐藏遮罩区域，须先反转遮罩。
     """
     candidates = [
         "Tool:Visibility:HidePt",
@@ -282,73 +282,73 @@ def _hide_masked():
             if hasattr(zbc, "exists") and not zbc.exists(path):
                 continue
             zbc.press(path)
-            _log(f"  [vis] HidePt via '{path}'")
+            _log(f"  [vis] 通过 '{path}' 执行 HidePt")
             return True
         except Exception:
             continue
-    _log("  Warning: Could not hide points")
+    _log("  警告：无法隐藏点")
     return False
 
 
 def _delete_hidden():
-    """Delete hidden geometry"""
+    """删除隐藏的几何体"""
     try:
         zbc.press("Tool:Geometry:Modify Topology:Del Hidden")
     except Exception:
         try:
             zbc.press("Tool:Geometry:Del Hidden")
         except Exception:
-            _log("Warning: Could not delete hidden faces")
+            _log("警告：无法删除隐藏面")
 
 
 def _close_holes():
-    """Close all open holes"""
+    """闭合所有开放孔洞"""
     try:
         zbc.press("Tool:Geometry:Modify Topology:Close Holes")
     except Exception:
         try:
             zbc.press("Tool:Geometry:Close Holes")
         except Exception:
-            _log("ERROR: Could not close holes")
+            _log("错误：无法闭合孔洞")
 
 
 def _auto_groups():
-    """Auto-create PolyGroups based on mesh connectivity"""
+    """根据网格连通性自动创建 PolyGroup"""
     try:
         zbc.press("Tool:PolyGroup:Auto Groups")
     except Exception:
-        _log("Warning: Could not auto-group")
+        _log("警告：无法自动分组")
 
 
 def _group_masked(clear_mask=True):
-    """Create PolyGroup from masked area"""
+    """从遮罩区域创建 PolyGroup"""
     try:
         if clear_mask:
             zbc.press("Tool:PolyGroup:Group Masked Clear")
         else:
             zbc.press("Tool:PolyGroup:Group Masked")
     except Exception:
-        _log("Warning: Could not group masked area")
+        _log("警告：无法为遮罩区域创建组")
 
 
 def _mask_all():
-    """Mask entire mesh"""
+    """遮罩整个网格"""
     try:
         zbc.press("Tool:Masking:MaskAll")
     except Exception:
-        _log("Warning: Could not mask all")
+        _log("警告：无法遮罩全部")
 
 
 def _clear_mask():
-    """Clear the current mask"""
+    """清除当前遮罩"""
     try:
         zbc.press("Tool:Masking:Clear")
     except Exception:
-        _log("Warning: Could not clear mask")
+        _log("警告：无法清除遮罩")
 
 
 def _invert_mask():
-    """Invert the current mask. Tries several known button paths."""
+    """反转当前遮罩。尝试多个已知按钮路径。"""
     candidates = [
         "Tool:Masking:Inverse",
         "Tool:Masking:Invert",
@@ -359,16 +359,16 @@ def _invert_mask():
             if hasattr(zbc, "exists") and not zbc.exists(path):
                 continue
             zbc.press(path)
-            _log(f"  [mask] invert via '{path}'")
+            _log(f"  [mask] 通过 '{path}' 反转遮罩")
             return True
         except Exception:
             continue
-    _log("  Warning: Could not invert mask (no known button path)")
+    _log("  警告：无法反转遮罩（无已知按钮路径）")
     return False
 
 
 def _invert_visibility():
-    """Invert visibility. Tries several known button paths."""
+    """反转可见性。尝试多个已知按钮路径。"""
     candidates = [
         "Tool:Visibility:Invert",
         "Tool:Visibility:Inverse",
@@ -379,32 +379,32 @@ def _invert_visibility():
             if hasattr(zbc, "exists") and not zbc.exists(path):
                 continue
             zbc.press(path)
-            _log(f"  [vis] invert via '{path}'")
+            _log(f"  [vis] 通过 '{path}' 反转可见性")
             return True
         except Exception:
             continue
-    _log("  Warning: Could not invert visibility")
+    _log("  警告：无法反转可见性")
     return False
 
 
 def _show_all():
-    """Show all geometry"""
+    """显示所有几何体"""
     try:
         zbc.press("Tool:Visibility:ShowPt")
     except Exception:
-        _log("Warning: Could not show all")
+        _log("警告：无法显示全部")
 
 
 def _mask_by_polygroups():
-    """Create mask from PolyGroups"""
+    """从 PolyGroup 创建遮罩"""
     try:
         zbc.press("Tool:Masking:MaskByPolyGroups")
     except Exception:
-        _log("Warning: Could not mask by PolyGroups")
+        _log("警告：无法按 PolyGroup 遮罩")
 
 
 def _undo():
-    """Create an undo point"""
+    """创建撤销点"""
     try:
         zbc.press("Edit:Undo")
     except Exception:
@@ -412,34 +412,34 @@ def _undo():
 
 
 def _export_obj(filepath):
-    """Export current tool to OBJ file"""
+    """导出当前工具为 OBJ 文件"""
     try:
         zbc.set_next_filename(filepath)
         zbc.press("Tool:Export")
         zbc.update()
         return os.path.exists(filepath)
     except Exception as e:
-        _log(f"Warning: _export_obj failed: {e}")
+        _log(f"警告：_export_obj 失败：{e}")
         return False
 
 
 def _import_obj(filepath):
-    """Import OBJ file as current tool"""
+    """导入 OBJ 文件作为当前工具"""
     try:
         zbc.set_next_filename(filepath)
         zbc.press("Tool:Import")
         zbc.update()
         return True
     except Exception as e:
-        _log(f"Warning: _import_obj failed: {e}")
+        _log(f"警告：_import_obj 失败：{e}")
         return False
 
 
 def _import_goz(filepath):
-    """Import GoZ file as current tool. PolyGroups and Mask are natively supported.
+    """导入 GoZ 文件作为当前工具。原生支持 PolyGroup 和遮罩。
 
-    Returns True if the GoZ was successfully imported and the mesh was loaded.
-    Falls back to OBJ import from sibling .obj file if GoZ import fails.
+    成功导入并加载网格时返回 True。
+    GoZ 导入失败时，回退到同名的 .obj 文件导入。
     """
     try:
         face_before = _get_face_count()
@@ -449,7 +449,7 @@ def _import_goz(filepath):
         face_after = _get_face_count()
         if face_after != face_before or face_before == 0:
             return True
-        _log("  Warning: GoZ import via Tool:Import did not change mesh, trying alternative...")
+        _log("  警告：通过 Tool:Import 导入 GoZ 未改变网格，尝试备选方案……")
         try:
             zbc.execute_zscript('[IPress,Tool:GoZ]')
             zbc.update()
@@ -458,20 +458,20 @@ def _import_goz(filepath):
             pass
         return False
     except Exception as e:
-        _log(f"  Warning: GoZ import failed: {e}")
+        _log(f"  警告：GoZ 导入失败：{e}")
         return False
 
 
 def _import_obj_as_subtool(filepath):
-    """Import OBJ file directly as a subtool of the current tool.
-    (Reserved for future use - currently not called.)
+    """直接导入 OBJ 文件作为当前工具的副工具。
+    （预留功能，当前未使用。）
 
-    Uses ZScript ISubToolAddMesh which adds a mesh file as a new
-    subtool without replacing the current tool.
-    ZBrush assigns different PolyGroups when subtools are later merged.
+    使用 ZScript ISubToolAddMesh 将网格文件添加为新副工具，
+    不会替换当前工具。
+    后续合并副工具时，ZBrush 会分配不同的 PolyGroup。
 
-    If ZScript is not available, tries Tool:Subtool:Insert.
-    Returns True if subtool was added, False otherwise.
+    如 ZScript 不可用，尝试 Tool:Subtool:Insert。
+    成功添加副工具时返回 True，否则返回 False。
     """
     try:
         script = '[ISubToolAddMesh, "{0}"]'.format(filepath.replace("\\", "/"))
@@ -483,24 +483,23 @@ def _import_obj_as_subtool(filepath):
         zbc.update()
         return True
     except Exception as e:
-        _log(f"  Warning: Subtool import failed: {e}, falling back to OBJ import")
+        _log(f"  警告：副工具导入失败：{e}，回退到 OBJ 导入")
         return False
 
 
 def _merge_visible():
-    """Merge all visible subtools into one. Different subtool origins
-    receive different PolyGroups in the merged result."""
+    """合并所有可见副工具为一个。不同副工具来源在合并结果中会获得不同的 PolyGroup。"""
     try:
         zbc.press("Tool:Subtool:Merge Visible")
     except Exception:
         try:
             zbc.press("Tool:Subtool:MergeDown")
         except Exception:
-            _log("  Warning: Could not merge subtools")
+            _log("  警告：无法合并副工具")
 
 
 def _weld_points():
-    """Weld coincident vertices (used after Merge to fuse patch boundary)."""
+    """焊接重合顶点（合并后用于融合补丁边界）。"""
     candidates = [
         "Tool:Geometry:Modify Topology:Weld Points",
         "Tool:Geometry:WeldPoints",
@@ -512,12 +511,12 @@ def _weld_points():
             return True
         except Exception:
             continue
-    _log("  Warning: Could not find Weld Points button")
+    _log("  警告：找不到焊接点按钮")
     return False
 
 
 def _read_obj_full(filepath):
-    """Read OBJ keeping vertex/face/group structure as-is (preserves quads)."""
+    """读取 OBJ，保持顶点/面/组结构不变（保留四边形）。"""
     vertices = []
     faces = []
     groups = []
@@ -546,22 +545,21 @@ def _read_obj_full(filepath):
 
 
 def _merge_obj_with_patch(orig_obj, patch_obj, out_obj, weld_eps=None):
-    """Combine original OBJ with fill patch OBJ.
+    """合并原始 OBJ 与填充补丁 OBJ。
 
-    - Preserves original quads/N-gons exactly.
-    - Welds patch boundary vertices that coincide with original vertices,
-      using a relative tolerance scaled to the model's bounding box so
-      large-scale meshes (where ASCII OBJ float precision loses tail
-      digits) still weld correctly.
-    - Tags fill faces with group name 'ZMeshMend_Fill'.
+    - 精确保留原始四边形/N 边形。
+    - 焊接与原始顶点重合的补丁边界顶点，
+      使用基于模型包围盒的相对容差，
+      确保大尺度网格（ASCII OBJ 浮点精度掉尾数时）仍能正确焊接。
+    - 将填充面标记为组名 'ZMeshMend_Fill'。
 
-    Returns (success, fill_face_count).
+    返回 (成功, 填充面数)。
     """
     try:
         ov, of, og = _read_obj_full(orig_obj)
         pv, pf, _ = _read_obj_full(patch_obj)
     except Exception as e:
-        _log(f"  OBJ merge read failed: {e}")
+        _log(f"  OBJ 合并读取失败：{e}")
         return False, 0
 
     if not pf:
@@ -578,7 +576,7 @@ def _merge_obj_with_patch(orig_obj, patch_obj, out_obj, weld_eps=None):
             weld_eps = max(diag * 1e-5, 1e-5)
         else:
             weld_eps = 1e-5
-    _log(f"  Weld tolerance: {weld_eps:.6g}")
+    _log(f"  焊接容差：{weld_eps:.6g}")
 
     grid = {}
     cell = max(weld_eps * 2.0, 1e-12)
@@ -638,8 +636,8 @@ def _merge_obj_with_patch(orig_obj, patch_obj, out_obj, weld_eps=None):
 
     try:
         with open(out_obj, "w", encoding="utf-8") as f:
-            f.write("# ZMeshMend merged mesh\n")
-            f.write(f"# vertices: {len(new_verts)} faces: {len(new_faces)}\n")
+            f.write("# ZMeshMend 合并网格\n")
+            f.write(f"# 顶点数：{len(new_verts)} 面数：{len(new_faces)}\n")
             for v in new_verts:
                 f.write(f"v {v[0]:.9f} {v[1]:.9f} {v[2]:.9f}\n")
             cur = None
@@ -650,22 +648,22 @@ def _merge_obj_with_patch(orig_obj, patch_obj, out_obj, weld_eps=None):
                     f.write(f"g {g}\n")
                 f.write("f " + " ".join(str(x) for x in face) + "\n")
     except Exception as e:
-        _log(f"  OBJ merge write failed: {e}")
+        _log(f"  OBJ 合并写入失败：{e}")
         return False, 0
 
-    _log(f"  Merged OBJ: orig={len(ov)}v/{len(of)}f, patch={len(pv)}v/{len(pf)}f, "
-         f"welded={welded_count}/{len(pv)}, "
-         f"final={len(new_verts)}v/{len(new_faces)}f")
+    _log(f"  合并 OBJ：原始={len(ov)}v/{len(of)}f，补丁={len(pv)}v/{len(pf)}f，"
+         f"已焊接={welded_count}/{len(pv)}，"
+         f"最终={len(new_verts)}v/{len(new_faces)}f")
     return True, fill_count
 
 
 def _merge_patch_and_weld(patch_obj_path, orig_obj_path=None):
-    """Strategy: build a merged OBJ (orig + patch with welded vertices)
-    in Python, then Tool:Import the result back. Avoids SubTool API
-    pitfalls and keeps original quads intact.
+    """策略：在 Python 中构建合并 OBJ（原始 + 焊接顶点的补丁），
+    然后 Tool:Import 导回结果。避开 SubTool API 的坑，
+    并保持原始四边形完整。
 
-    If orig_obj_path is provided and exists, it is reused (skips a redundant
-    Tool:Export). Otherwise the current mesh is exported to a temp file.
+    如提供 orig_obj_path 且存在，则复用之（跳过一次冗余的
+    Tool:Export）。否则将当前网格导出到临时文件。
     """
     try:
         face_before = _get_face_count()
@@ -677,14 +675,14 @@ def _merge_patch_and_weld(patch_obj_path, orig_obj_path=None):
             orig_obj = os.path.join(tempfile.gettempdir(), "zmeshmend_orig.obj")
             cleanup_orig = True
             if not _export_obj(orig_obj):
-                _log("  Cannot export original mesh for patch merge")
+                _log("  无法导出原始网格以进行补丁合并")
                 return False
 
         merged_obj = os.path.join(tempfile.gettempdir(), "zmeshmend_merged.obj")
 
         ok, fill_count = _merge_obj_with_patch(orig_obj, patch_obj_path, merged_obj)
         if not ok or fill_count == 0:
-            _log("  Patch is empty or merge failed")
+            _log("  补丁为空或合并失败")
             try: os.remove(merged_obj)
             except Exception: pass
             if cleanup_orig:
@@ -693,7 +691,7 @@ def _merge_patch_and_weld(patch_obj_path, orig_obj_path=None):
             return False
 
         if not _import_obj(merged_obj):
-            _log("  Tool:Import of merged OBJ failed, restoring original...")
+            _log("  合并 OBJ 的 Tool:Import 失败，正在恢复原始……")
             _import_obj(orig_obj)
             try: os.remove(merged_obj)
             except Exception: pass
@@ -705,8 +703,8 @@ def _merge_patch_and_weld(patch_obj_path, orig_obj_path=None):
         zbc.update(redraw_ui=True)
 
         face_after = _get_face_count()
-        _log(f"  Patch merged: {face_before} -> {face_after} faces "
-             f"(+{face_after - face_before}, fill={fill_count})")
+        _log(f"  补丁已合并：{face_before} -> {face_after} 面 "
+             f"(+{face_after - face_before}，填充={fill_count})")
 
         try: os.remove(merged_obj)
         except Exception: pass
@@ -716,12 +714,12 @@ def _merge_patch_and_weld(patch_obj_path, orig_obj_path=None):
 
         return True
     except Exception as e:
-        _log(f"  Patch merge failed: {e}")
+        _log(f"  补丁合并失败：{e}")
         return False
 
 
 def _count_faces_in_obj(filepath):
-    """Count face lines ('f ') in an OBJ file"""
+    """统计 OBJ 文件中的面行（'f '）数量"""
     count = 0
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
@@ -733,8 +731,8 @@ def _count_faces_in_obj(filepath):
     return count
 
 
-def _freeze_op(fn, desc="Processing"):
-    """Execute an operation with frozen UI and progress display"""
+def _freeze_op(fn, desc="处理中"):
+    """冻结 UI 并显示进度来执行操作"""
     def wrapped():
         _progress(desc, 0.0)
         try:
@@ -745,7 +743,7 @@ def _freeze_op(fn, desc="Processing"):
 
 
 def _read_obj_vertices_faces(filepath):
-    """Read OBJ file, return (vertices, faces, groups)"""
+    """读取 OBJ 文件，返回 (顶点, 面, 组)"""
     vertices = []
     faces = []
     groups = []
@@ -782,10 +780,10 @@ def _read_obj_vertices_faces(filepath):
 
 
 def _write_obj(filepath, vertices, faces, groups=None):
-    """Write OBJ file from vertices and faces"""
+    """从顶点和面写入 OBJ 文件"""
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write("# ZMeshMend - Cleaned mesh\n")
-        f.write(f"# Vertices: {len(vertices)}, Faces: {len(faces)}\n")
+        f.write("# ZMeshMend - 清理后的网格\n")
+        f.write(f"# 顶点数：{len(vertices)}，面数：{len(faces)}\n")
 
         for v in vertices:
             f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
@@ -804,12 +802,12 @@ def _write_obj(filepath, vertices, faces, groups=None):
 
 
 def _write_face_line(f, face):
-    """Write a single face line to OBJ"""
+    """写入单行面数据到 OBJ"""
     f.write("f " + " ".join(str(i) for i in face) + "\n")
 
 
 def _find_connected_components(faces):
-    """Find connected components by face adjacency"""
+    """通过面邻接关系查找连通分量"""
     face_to_vert = {i: set(f) for i, f in enumerate(faces)}
     vert_to_faces = {}
     for fi, face in enumerate(faces):
@@ -840,7 +838,7 @@ def _find_connected_components(faces):
 
 
 def _remove_small_fragments(filepath, total_faces, min_frac, min_abs):
-    """Remove small disconnected fragments from OBJ file"""
+    """从 OBJ 文件中移除小型分离碎片"""
     vertices, faces, groups = _read_obj_vertices_faces(filepath)
 
     if len(faces) < 2:
@@ -848,7 +846,7 @@ def _remove_small_fragments(filepath, total_faces, min_frac, min_abs):
 
     components = _find_connected_components(faces)
     if len(components) <= 1:
-        _log(f"  Mesh is one connected component (no fragments to remove)")
+        _log(f"  网格为单一连通分量（无碎片可移除）")
         return False
 
     threshold = max(min_abs, int(total_faces * min_frac))
@@ -864,7 +862,7 @@ def _remove_small_fragments(filepath, total_faces, min_frac, min_abs):
             removed_count += 1
 
     if removed_count == 0:
-        _log(f"  All {len(components)} components exceed threshold {threshold} faces")
+        _log(f"  所有 {len(components)} 个分量均超过阈值 {threshold} 面")
         return False
 
     new_faces = [faces[i] for i in sorted(keep)]
@@ -874,7 +872,7 @@ def _remove_small_fragments(filepath, total_faces, min_frac, min_abs):
         new_groups = None
 
     _write_obj(filepath, vertices, new_faces, new_groups)
-    _log(f"  Kept {large_count} large components, removed {removed_count} small fragments")
+    _log(f"  保留 {large_count} 个大分量，移除 {removed_count} 个小型碎片")
     return True
 
 
@@ -906,7 +904,7 @@ def _v3_normalize(v):
 
 
 def _find_boundary_edges(faces):
-    """Find boundary edges (edges appearing in only one face)"""
+    """查找边界边（仅出现在一个面中的边）"""
     edge_count = {}
     for face in faces:
         n = len(face)
@@ -919,7 +917,7 @@ def _find_boundary_edges(faces):
 
 
 def _build_boundary_loops(boundary_edges):
-    """Chain boundary edges into loops"""
+    """将边界边链成环"""
     adj = {}
     for a, b in boundary_edges:
         adj.setdefault(a, []).append(b)
@@ -949,7 +947,7 @@ def _build_boundary_loops(boundary_edges):
 
 
 def _compute_loop_centroid(loop, vertices):
-    """Compute centroid of a boundary loop"""
+    """计算边界环的质心"""
     if not loop:
         return (0, 0, 0)
     sx = sy = sz = 0.0
@@ -963,7 +961,7 @@ def _compute_loop_centroid(loop, vertices):
 
 
 def _compute_loop_normal(loop, vertices):
-    """Compute approximate normal for a loop using Newell's method"""
+    """使用 Newell 方法计算环的近似法线"""
     if len(loop) < 3:
         return (0, 1, 0)
     nx = ny = nz = 0.0
@@ -979,7 +977,7 @@ def _compute_loop_normal(loop, vertices):
 
 
 def _collect_nearby_vertices(loop, vertices, faces, rings=2):
-    """Collect vertices near the boundary loop"""
+    """收集边界环附近的顶点"""
     loop_set = set(loop)
 
     adj = {}
@@ -1006,7 +1004,7 @@ def _collect_nearby_vertices(loop, vertices, faces, rings=2):
 
 
 def _fit_sphere(points):
-    """Least-squares fit a sphere to a set of 3D points"""
+    """用最小二乘法拟合球体到 3D 点集"""
     if len(points) < 4:
         return None
 
@@ -1131,7 +1129,7 @@ def _fit_sphere(points):
 
 
 def _project_to_sphere(point, center, radius):
-    """Project a point onto a sphere surface"""
+    """将点投影到球面上"""
     dx = point[0] - center[0]
     dy = point[1] - center[1]
     dz = point[2] - center[2]
@@ -1144,9 +1142,9 @@ def _project_to_sphere(point, center, radius):
 
 def _fill_hole_smart(vertices, faces, loop, groups_list=None):
     """
-    Fill a boundary loop using sphere-fitting for curvature-aware completion.
-    If the surrounding surface fits a sphere well, new vertices are projected
-    onto that sphere. Otherwise falls back to centroid-based linear fill.
+    使用球体拟合进行曲率感知的边界环填充。
+    若周围曲面能较好地拟合为球体，新顶点将投影到该球面上。
+    否则回退到基于质心的线性填充。
     """
     if len(loop) < 3:
         return [], [], []
@@ -1202,16 +1200,16 @@ def _fill_hole_smart(vertices, faces, loop, groups_list=None):
 
 
 def _process_holes_in_obj(filepath):
-    """Process OBJ file: detect and fill holes with sphere-fitting"""
+    """处理 OBJ 文件：检测并用球体拟合填充孔洞"""
     vertices, faces, groups = _read_obj_vertices_faces(filepath)
 
     boundary_edges = _find_boundary_edges(faces)
     if not boundary_edges:
-        _log("  No open boundaries found - mesh is watertight")
+        _log("  未发现开放边界 - 网格为水密的")
         return False
 
     loops = _build_boundary_loops(boundary_edges)
-    _log(f"  Found {len(loops)} hole(s) with {len(boundary_edges)} boundary edges")
+    _log(f"  发现 {len(loops)} 个孔洞，共 {len(boundary_edges)} 条边界边")
 
     total_new_faces = 0
     for loop in loops:
@@ -1224,16 +1222,16 @@ def _process_holes_in_obj(filepath):
 
     if total_new_faces > 0:
         _write_obj(filepath, vertices, faces, groups)
-        _log(f"  Filled {total_new_faces} new face(s) across {len(loops)} hole(s)")
+        _log(f"  在 {len(loops)} 个孔洞上填充了 {total_new_faces} 个新面")
         return True
 
     return False
 
 
 def do_close_all_holes(sender=""):
-    """Feature 1: Auto-close all holes on current mesh"""
+    """功能 1：自动闭合当前网格所有孔洞"""
     _log("=" * 50)
-    _log("Close All Holes")
+    _log("闭合所有孔洞")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
@@ -1241,30 +1239,30 @@ def do_close_all_holes(sender=""):
 
     vtx_before = _get_vertex_count()
     face_before = _get_face_count()
-    _log(f"Before: {vtx_before} vertices, {face_before} faces")
+    _log(f"之前：{vtx_before} 顶点，{face_before} 面")
 
     _close_holes()
     zbc.update(redraw_ui=True)
 
     vtx_after = _get_vertex_count()
     face_after = _get_face_count()
-    _log(f"After:  {vtx_after} vertices, {face_after} faces")
-    _log(f"Added:  {face_after - face_before} face(s)")
+    _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+    _log(f"新增：{face_after - face_before} 面")
 
-    _progress("Complete!", 1.0)
+    _progress("完成！", 1.0)
     zbc.message_ok(
-        f"Close Holes Complete!\n\n"
-        f"Holes closed on current mesh.\n"
-        f"Faces added: {face_after - face_before}",
+        f"闭合孔洞完成！\n\n"
+        f"已闭合当前网格上的孔洞。\n"
+        f"新增面数：{face_after - face_before}",
         "ZMeshMend"
     )
     _clear_progress()
 
 
 def do_remove_small_fragments(sender=""):
-    """Feature 2: Remove small disconnected fragments"""
+    """功能 2：移除小型分离碎片"""
     _log("=" * 50)
-    _log("Remove Small Fragments")
+    _log("移除小型碎片")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
@@ -1272,17 +1270,17 @@ def do_remove_small_fragments(sender=""):
 
     vtx_before = _get_vertex_count()
     face_before = _get_face_count()
-    _log(f"Before: {vtx_before} vertices, {face_before} faces")
+    _log(f"之前：{vtx_before} 顶点，{face_before} 面")
 
     tmp_obj = os.path.join(tempfile.gettempdir(), "zmeshmend_frag.obj")
 
-    _progress("Exporting mesh...", 0.1)
+    _progress("正在导出网格……", 0.1)
     if not _export_obj(tmp_obj):
-        _log("ERROR: Failed to export mesh")
+        _log("错误：导出网格失败")
         _clear_progress()
         return
 
-    _progress("Analyzing fragments...", 0.4)
+    _progress("正在分析碎片……", 0.4)
     removed = _remove_small_fragments(
         tmp_obj, face_before,
         CONFIG["fragmentMinFraction"],
@@ -1290,45 +1288,45 @@ def do_remove_small_fragments(sender=""):
     )
 
     if removed:
-        _progress("Importing cleaned mesh...", 0.7)
+        _progress("正在导入清理后的网格……", 0.7)
         if _import_obj(tmp_obj):
             zbc.update(redraw_ui=True)
             vtx_after = _get_vertex_count()
             face_after = _get_face_count()
-            _log(f"After:  {vtx_after} vertices, {face_after} faces")
-            _log(f"Removed: {face_before - face_after} face(s)")
+            _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+            _log(f"已移除：{face_before - face_after} 面")
         else:
-            _log("ERROR: Import failed, mesh may be in an inconsistent state")
+            _log("错误：导入失败，网格可能处于不一致状态")
     else:
-        _log("No small fragments found to remove")
+        _log("未发现可移除的小型碎片")
 
     try:
         os.remove(tmp_obj)
     except Exception:
         pass
 
-    _progress("Complete!", 1.0)
+    _progress("完成！", 1.0)
     zbc.message_ok(
-        "Fragment Removal Complete!\n\n"
-        "Small disconnected fragments have been removed.\n"
-        "Check the console for details.",
+        "碎片移除完成！\n\n"
+        "小型分离碎片已移除。\n"
+        "详情请查看控制台。",
         "ZMeshMend"
     )
     _clear_progress()
 
 
 def do_close_with_polygroup_mask(sender=""):
-    """Feature 3+4: Close holes with CGAL refine+fair, assign new PolyGroup to filled areas.
+    """功能 3+4：使用 CGAL refine+fair 闭合孔洞，为填充区域分配新 PolyGroup。
 
-    Export OBJ → CGAL fills → import GoZ (with PolyGroups embedded).
-    GoZ format natively carries PolyGroup IDs and Mask data,
-    so fill faces automatically get a separate PolyGroup.
+    导出 OBJ → CGAL 填充 → 导入 GoZ（内嵌 PolyGroup）。
+    GoZ 格式原生携带 PolyGroup ID 和遮罩数据，
+    因此填充面自动获得独立的 PolyGroup。
     """
     _log("=" * 50)
     if _cgal_available():
-        _log("Close Holes + PolyGroup (CGAL refine+fair + GoZ)")
+        _log("闭合孔洞 + PolyGroup（CGAL refine+fair + GoZ）")
     else:
-        _log("Close Holes + PolyGroup (ZBrush built-in)")
+        _log("闭合孔洞 + PolyGroup（ZBrush 内置）")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
@@ -1336,34 +1334,34 @@ def do_close_with_polygroup_mask(sender=""):
 
     vtx_before = _get_vertex_count()
     face_before = _get_face_count()
-    _log(f"Before: {vtx_before} vertices, {face_before} faces")
+    _log(f"之前：{vtx_before} 顶点，{face_before} 面")
 
     if _cgal_available():
         tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_in.obj")
         tmp_patch = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_patch.obj")
 
-        _progress("Exporting mesh for CGAL...", 0.10)
+        _progress("正在导出网格供 CGAL 使用……", 0.10)
         if not _export_obj(tmp_in):
-            _log("ERROR: Failed to export mesh")
+            _log("错误：导出网格失败")
             _clear_progress()
             return
 
-        _progress("CGAL triangulate_refine_and_fair_hole...", 0.20)
+        _progress("CGAL 三角剖分 refine 并 fair 孔洞……", 0.20)
         success, faces_added = _call_cgal_fill(tmp_in, tmp_patch)
 
         merged = False
         if success and os.path.exists(tmp_patch) and _count_faces_in_obj(tmp_patch) > 0:
-            _progress("Merging fill patch...", 0.70)
+            _progress("正在合并填充补丁……", 0.70)
             merged = _merge_patch_and_weld(tmp_patch, orig_obj_path=tmp_in)
 
         if merged:
             vtx_after = _get_vertex_count()
             face_after = _get_face_count()
-            _log(f"After:  {vtx_after} vertices, {face_after} faces")
-            _log(f"Added:  {face_after - face_before} face(s)")
-            _log("  Patch merged via OBJ weld (original quads preserved)")
+            _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+            _log(f"新增：{face_after - face_before} 面")
+            _log("  补丁通过 OBJ 焊接合并（原始四边形已保留）")
         else:
-            _log("Patch merge failed or empty patch. Falling back to ZBrush built-in...")
+            _log("补丁合并失败或为空。回退到 ZBrush 内置闭合……")
             _close_holes()
             zbc.update(redraw_ui=True)
             _auto_groups()
@@ -1371,7 +1369,7 @@ def do_close_with_polygroup_mask(sender=""):
 
             vtx_after = _get_vertex_count()
             face_after = _get_face_count()
-            _log(f"After (fallback): {vtx_after} vertices, {face_after} faces")
+            _log(f"之后（回退）：{vtx_after} 顶点，{face_after} 面")
 
         for f in [tmp_in, tmp_patch]:
             try:
@@ -1379,8 +1377,8 @@ def do_close_with_polygroup_mask(sender=""):
             except Exception:
                 pass
     else:
-        _log("  CGAL EXE not found, using ZBrush built-in Close Holes")
-        _log("  To enable CGAL: build zmeshmend_core.exe into ZMeshMendData/")
+        _log("  未找到 CGAL EXE，使用 ZBrush 内置闭合孔洞")
+        _log("  启用 CGAL：请将 zmeshmend_core.exe 编译到 ZMeshMendData/ 目录")
         _close_holes()
         zbc.update(redraw_ui=True)
         _auto_groups()
@@ -1388,30 +1386,30 @@ def do_close_with_polygroup_mask(sender=""):
 
         vtx_after = _get_vertex_count()
         face_after = _get_face_count()
-        _log(f"After:  {vtx_after} vertices, {face_after} faces")
-        _log(f"Added:  {face_after - face_before} face(s)")
+        _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+        _log(f"新增：{face_after - face_before} 面")
 
-    _progress("Complete!", 1.0)
+    _progress("完成！", 1.0)
     zbc.message_ok(
-        "MendHoles + PolyGroup Complete!\n\n"
-        "Holes filled with CGAL refine+fair.\n"
-        "Fill patch merged via OBJ weld; original quads preserved.\n"
-        "Fill faces tagged with the 'ZMeshMend_Fill' PolyGroup.\n\n"
-        "Tip: Ctrl+Shift+Click a PolyGroup to mask it.",
+        "MendHoles + PolyGroup 完成！\n\n"
+        "孔洞已用 CGAL refine+fair 填充。\n"
+        "补丁通过 OBJ 焊接合并；原始四边形已保留。\n"
+        "填充面已标记为 'ZMeshMend_Fill' PolyGroup。\n\n"
+        "提示：Ctrl+Shift+点击 PolyGroup 可对其遮罩。",
         "ZMeshMend"
     )
     _clear_progress()
 
 
 def do_mask_based_cleanup(sender=""):
-    """Feature 5: Mask-based mesh cleanup workflow.
-    Steps: sharpen mask → grow mask → invert → hide masked → delete →
-           close holes → polygroup
-    Mask indicates the area to DELETE. The masked area is removed and
-    the resulting hole is filled; the unmasked area is preserved.
+    """功能 5：基于遮罩的网格清理工作流。
+    步骤：锐化遮罩 → 扩展遮罩 → 反转 → 隐藏遮罩区 → 删除 →
+           闭合孔洞 → 分组
+    遮罩指示要删除的区域。遮罩区域被移除后，
+    产生的孔洞会被填充；未遮罩区域保持不变。
     """
     _log("=" * 50)
-    _log("Mask-Based Cleanup Workflow")
+    _log("基于遮罩的清理工作流")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
@@ -1419,38 +1417,38 @@ def do_mask_based_cleanup(sender=""):
 
     vtx_before = _get_vertex_count()
     face_before = _get_face_count()
-    _log(f"Before: {vtx_before} vertices, {face_before} faces")
+    _log(f"之前：{vtx_before} 顶点，{face_before} 面")
 
     sharpen_passes = CONFIG["maskSharpenPasses"]
     grow_rings = CONFIG["maskGrowRings"]
 
-    _progress("Step 1/5: Sharpening mask...", 0.05)
-    _log(f"  Sharpening mask ({sharpen_passes} pass(es))")
+    _progress("步骤 1/5：锐化遮罩……", 0.05)
+    _log(f"  锐化遮罩（{sharpen_passes} 遍）")
     _sharpen_mask(sharpen_passes)
     zbc.update()
 
-    _progress("Step 2/5: Growing mask...", 0.20)
-    _log(f"  Growing mask ({grow_rings} ring(s))")
+    _progress("步骤 2/5：扩展遮罩……", 0.20)
+    _log(f"  扩展遮罩（{grow_rings} 环）")
     _grow_mask(grow_rings)
     zbc.update()
 
-    _progress("Step 3/5: Deleting masked faces...", 0.35)
-    _log("  Inverting mask so unmasked region becomes hidden...")
+    _progress("步骤 3/5：删除遮罩面……", 0.35)
+    _log("  反转遮罩使未遮罩区域变为隐藏……")
     _invert_mask()
     zbc.update()
-    _log("  HidePt hides unmasked points (delete region)...")
+    _log("  HidePt 隐藏未遮罩的点（即要删除的区域）……")
     _hide_masked()
     zbc.update()
-    _log("  Deleting hidden faces (the masked region)...")
+    _log("  删除隐藏面（即遮罩区域）……")
     _delete_hidden()
     zbc.update()
     _show_all()
     zbc.update()
 
     face_after_delete = _get_face_count()
-    _log(f"  Faces after deletion: {face_after_delete} (removed {face_before - face_after_delete})")
+    _log(f"  删除后面数：{face_after_delete}（已删除 {face_before - face_after_delete}）")
 
-    _progress("Step 5/6: Closing holes (CGAL patch merge)...", 0.60)
+    _progress("步骤 5/6：闭合孔洞（CGAL 补丁合并）……", 0.60)
     cgal_merged = False
     if _cgal_available():
         tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_mask_in.obj")
@@ -1461,12 +1459,12 @@ def do_mask_based_cleanup(sender=""):
             if success and os.path.exists(tmp_patch) and _count_faces_in_obj(tmp_patch) > 0:
                 if _merge_patch_and_weld(tmp_patch, orig_obj_path=tmp_in):
                     cgal_merged = True
-                    _log(f"  CGAL: {cgal_added} faces added, merged via OBJ weld")
+                    _log(f"  CGAL：新增 {cgal_added} 面，通过 OBJ 焊接合并")
                 else:
-                    _log("  Patch merge failed, falling back to ZBrush close holes")
+                    _log("  补丁合并失败，回退到 ZBrush 闭合孔洞")
                     _close_holes()
             else:
-                _log("  CGAL failed or empty patch, falling back to ZBrush close holes")
+                _log("  CGAL 失败或补丁为空，回退到 ZBrush 闭合孔洞")
                 _close_holes()
             for f in [tmp_in, tmp_patch]:
                 try:
@@ -1474,127 +1472,127 @@ def do_mask_based_cleanup(sender=""):
                 except Exception:
                     pass
         else:
-            _log("  Export failed, using ZBrush built-in")
+            _log("  导出失败，使用 ZBrush 内置")
             _close_holes()
     else:
         _close_holes()
     zbc.update(redraw_ui=True)
 
     face_after_close = _get_face_count()
-    _log(f"  Faces after close: {face_after_close} (added {face_after_close - face_after_delete})")
+    _log(f"  闭合后面数：{face_after_close}（新增 {face_after_close - face_after_delete}）")
 
-    _progress("Step 6/6: Grouping filled areas...", 0.85)
+    _progress("步骤 6/6：为填充区域分组……", 0.85)
     if cgal_merged:
-        _log("  CGAL patch merged: ZMeshMend_Fill PolyGroup preserved from OBJ tag")
+        _log("  CGAL 补丁已合并：ZMeshMend_Fill PolyGroup 从 OBJ 标签保留")
     else:
-        _log("  CGAL not merged - applying Auto Groups fallback")
+        _log("  CGAL 未合并 - 应用 Auto Groups 回退")
         _auto_groups()
     zbc.update(redraw_ui=True)
 
     vtx_after = _get_vertex_count()
     face_after = _get_face_count()
-    _log(f"Final: {vtx_after} vertices, {face_after} faces")
-    _log(f"Total faces added: {face_after - face_before}")
+    _log(f"最终：{vtx_after} 顶点，{face_after} 面")
+    _log(f"总计新增面数：{face_after - face_before}")
 
-    _progress("Complete!", 1.0)
+    _progress("完成！", 1.0)
     zbc.message_ok(
-        "Mask-Based Cleanup Complete!\n\n"
-        f"Faces before: {face_before}\n"
-        f"Faces deleted: {face_before - face_after_delete}\n"
-        f"Faces filled: {face_after_close - face_after_delete}\n"
-        f"Faces final: {face_after}\n\n"
-        "Fill patch merged via OBJ weld; original quads preserved.\n"
-        "Fill faces tagged with the 'ZMeshMend_Fill' PolyGroup.\n"
-        "Use Ctrl+Shift+Click to mask by PolyGroup.",
+        "基于遮罩的清理完成！\n\n"
+        f"操作前面数：{face_before}\n"
+        f"删除面数：{face_before - face_after_delete}\n"
+        f"填充面数：{face_after_close - face_after_delete}\n"
+        f"最终面数：{face_after}\n\n"
+        "补丁通过 OBJ 焊接合并；原始四边形已保留。\n"
+        "填充面已标记为 'ZMeshMend_Fill' PolyGroup。\n"
+        "使用 Ctrl+Shift+点击可按 PolyGroup 遮罩。",
         "ZMeshMend"
     )
     _clear_progress()
 
 
 def do_export_mesh(sender=""):
-    """Export current mesh to OBJ for external processing"""
+    """导出当前网格为 OBJ 供外部处理"""
     _log("=" * 50)
-    _log("Export Mesh for Processing")
+    _log("导出网格供处理")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
         return
 
-    save_path = zbc.ask_filename("*.obj", "mesh_export.obj", "Export Mesh OBJ")
+    save_path = zbc.ask_filename("*.obj", "mesh_export.obj", "导出网格 OBJ")
     if not save_path:
-        _log("Export cancelled")
+        _log("导出已取消")
         return
 
     if _export_obj(save_path):
         vtx = _get_vertex_count()
         face = _get_face_count()
-        _log(f"Exported: {vtx} vertices, {face} faces")
-        _log(f"Path: {save_path}")
+        _log(f"已导出：{vtx} 顶点，{face} 面")
+        _log(f"路径：{save_path}")
         zbc.message_ok(
-            f"Export Complete!\n\n"
-            f"Vertices: {vtx}\n"
-            f"Faces: {face}\n"
-            f"Saved to: {save_path}",
+            f"导出完成！\n\n"
+            f"顶点数：{vtx}\n"
+            f"面数：{face}\n"
+            f"保存至：{save_path}",
             "ZMeshMend"
         )
     else:
-        _log("ERROR: Export failed")
-        zbc.message_ok("Export failed!", "ZMeshMend - Error")
+        _log("错误：导出失败")
+        zbc.message_ok("导出失败！", "ZMeshMend - 错误")
 
 
 def do_import_mesh(sender=""):
-    """Import an externally processed OBJ mesh"""
+    """导入外部处理过的 OBJ 网格"""
     _log("=" * 50)
-    _log("Import Processed Mesh")
+    _log("导入处理后的网格")
     _log("=" * 50)
 
-    load_path = zbc.ask_filename("*.obj", "", "Import OBJ Mesh")
+    load_path = zbc.ask_filename("*.obj", "", "导入 OBJ 网格")
     if not load_path:
-        _log("Import cancelled")
+        _log("导入已取消")
         return
 
     if _import_obj(load_path):
         zbc.update(redraw_ui=True)
         vtx = _get_vertex_count()
         face = _get_face_count()
-        _log(f"Imported: {vtx} vertices, {face} faces")
+        _log(f"已导入：{vtx} 顶点，{face} 面")
         zbc.message_ok(
-            f"Import Complete!\n\n"
-            f"Vertices: {vtx}\n"
-            f"Faces: {face}",
+            f"导入完成！\n\n"
+            f"顶点数：{vtx}\n"
+            f"面数：{face}",
             "ZMeshMend"
         )
     else:
-        _log("ERROR: Import failed")
-        zbc.message_ok("Import failed!", "ZMeshMend - Error")
+        _log("错误：导入失败")
+        zbc.message_ok("导入失败！", "ZMeshMend - 错误")
 
 
 def _on_close_holes_click(sender=""):
-    _freeze_op(lambda: do_close_all_holes(sender), "Closing all holes...")
+    _freeze_op(lambda: do_close_all_holes(sender), "正在闭合所有孔洞……")
 
 
 def _on_remove_frag_click(sender=""):
-    _freeze_op(lambda: do_remove_small_fragments(sender), "Removing small fragments...")
+    _freeze_op(lambda: do_remove_small_fragments(sender), "正在移除小型碎片……")
 
 
 def _on_close_group_mask_click(sender=""):
-    _freeze_op(lambda: do_close_with_polygroup_mask(sender), "Closing holes with curvature detection...")
+    _freeze_op(lambda: do_close_with_polygroup_mask(sender), "正在闭合孔洞并检测曲率……")
 
 
 def _on_mask_cleanup_click(sender=""):
-    _freeze_op(lambda: do_mask_based_cleanup(sender), "Mask-based cleanup workflow...")
+    _freeze_op(lambda: do_mask_based_cleanup(sender), "基于遮罩的清理工作流……")
 
 
 def _on_export_click(sender=""):
-    _freeze_op(lambda: do_export_mesh(sender), "Exporting mesh...")
+    _freeze_op(lambda: do_export_mesh(sender), "正在导出网格……")
 
 
 def _on_import_click(sender=""):
-    _freeze_op(lambda: do_import_mesh(sender), "Importing processed mesh...")
+    _freeze_op(lambda: do_import_mesh(sender), "正在导入处理后的网格……")
 
 
 def _on_config_change(sender="", value=0.0):
-    """Handle config slider/switch changes"""
+    """处理配置滑块/开关的变更"""
     name = sender.split(":")[-1] if ":" in sender else sender
 
     if name == "Fragment Min Fraction":
@@ -1615,21 +1613,21 @@ def _on_config_change(sender="", value=0.0):
 
 
 def _on_info_click(sender=""):
-    """Show plugin information"""
+    """显示插件信息"""
     zbc.message_ok(
         "ZMeshMend v1.0.0\n\n"
-        "Core Features:\n"
-        "1. Auto-close all holes\n"
-        "2. Remove small disconnected fragments\n"
-        "3. Create new PolyGroup for filled areas\n"
-        "4. Auto-mask newly closed area\n"
-        "5. Mask-based mesh cleanup workflow",
-        "ZMeshMend - About"
+        "核心功能：\n"
+        "1. 自动闭合所有孔洞\n"
+        "2. 移除小型分离碎片\n"
+        "3. 为填充区域创建新 PolyGroup\n"
+        "4. 自动遮罩新闭合的区域\n"
+        "5. 基于遮罩的网格清理工作流",
+        "ZMeshMend - 关于"
     )
 
 
 def build_ui():
-    """Build the ZMeshMend plugin UI"""
+    """构建 ZMeshMend 插件 UI"""
     load_config()
 
     if zbc.exists(PALETTE_NAME):
@@ -1641,31 +1639,31 @@ def build_ui():
 
     zbc.add_button(
         _ui_path("Close Holes:Close All Holes"),
-        "Automatically closes all open holes on the current mesh.",
+        "自动闭合当前网格上的所有开放孔洞。",
         _on_close_holes_click,
         width=1.0,
     )
 
     zbc.add_button(
         _ui_path("Close Holes:MendHoles + PolyGroup"),
-        "Close holes with curvature-aware smart fill, create "
-        "new PolyGroups for filled areas, ready for masking.",
+        "使用曲率感知智能填充闭合孔洞，为新填充区域"
+        "创建 PolyGroup，便于遮罩操作。",
         _on_close_group_mask_click,
         width=1.0,
     )
 
     zbc.add_button(
         _ui_path("Close Holes:Mask-Based Cleanup"),
-        "Full workflow: sharpen mask > grow > delete masked faces "
-        "> close holes > new PolyGroup for filled area.",
+        "完整工作流：锐化遮罩 > 扩展 > 删除遮罩面 "
+        "> 闭合孔洞 > 为填充区域创建新 PolyGroup。",
         _on_mask_cleanup_click,
         width=1.0,
     )
 
     zbc.add_button(
         _ui_path("Close Holes:Remove Small Fragments"),
-        "Analyzes mesh connectivity and removes small "
-        "disconnected fragments and mesh debris.",
+        "分析网格连通性，移除小型"
+        "分离碎片和网格碎屑。",
         _on_remove_frag_click,
         width=1.0,
     )
@@ -1675,7 +1673,7 @@ def build_ui():
     zbc.add_switch(
         _ui_path("Settings:Remove Small Fragments"),
         CONFIG["removeSmallFragments"],
-        "Automatically remove small fragments during cleanup.",
+        "清理时自动移除小型碎片。",
         _on_config_change,
         width=1.0,
     )
@@ -1686,7 +1684,7 @@ def build_ui():
         100,
         0.0,
         0.5,
-        "Min fraction of total faces for a fragment to be kept (0.0-0.5).",
+        "保留碎片所需的最小面数占比（0.0-0.5）。",
         _on_config_change,
         width=1.0,
     )
@@ -1697,7 +1695,7 @@ def build_ui():
         1,
         1.0,
         500.0,
-        "Minimum absolute face count for a fragment to be kept.",
+        "保留碎片所需的最小绝对面数。",
         _on_config_change,
         width=1.0,
     )
@@ -1708,7 +1706,7 @@ def build_ui():
         1,
         0.0,
         5.0,
-        "Number of rings to grow the mask before deleting faces.",
+        "删除面前扩展遮罩的环数。",
         _on_config_change,
         width=1.0,
     )
@@ -1719,7 +1717,7 @@ def build_ui():
         1,
         0.0,
         5.0,
-        "Number of mask sharpen passes before grow.",
+        "扩展前锐化遮罩的遍数。",
         _on_config_change,
         width=1.0,
     )
@@ -1728,21 +1726,21 @@ def build_ui():
 
     zbc.add_button(
         _ui_path("Info:Export Current Mesh"),
-        "Export current mesh to OBJ for external processing.",
+        "导出当前网格为 OBJ 供外部处理。",
         _on_export_click,
         width=1.0,
     )
 
     zbc.add_button(
         _ui_path("Info:Import Processed Mesh"),
-        "Import an externally processed OBJ mesh.",
+        "导入外部处理过的 OBJ 网格。",
         _on_import_click,
         width=1.0,
     )
 
     zbc.add_button(
         _ui_path("Info:About ZMeshMend"),
-        "Show plugin information and version.",
+        "显示插件信息和版本号。",
         _on_info_click,
         width=1.0,
     )
@@ -1751,18 +1749,18 @@ def build_ui():
     zbc.maximize(SUBPALETTE_CONF)
     zbc.maximize(SUBPALETTE_INFO)
 
-    _log("ZMeshMend v1.0.0 loaded")
-    _log(f"Config path: {CONFIG_PATH}")
+    _log("ZMeshMend v1.0.0 已加载")
+    _log(f"配置路径：{CONFIG_PATH}")
     if _cgal_available():
-        _log(f"CGAL Core:   {_CGAL_EXE_REL}")
+        _log(f"CGAL 核心：{_CGAL_EXE_REL}")
     else:
-        _log(f"CGAL Core:   NOT FOUND (using ZBrush built-in Close Holes)")
-        _log(f"  Expected:  {_CGAL_EXE_REL}")
-        _log(f"  Build with: ZMeshMendData/build.bat")
+        _log(f"CGAL 核心：未找到（使用 ZBrush 内置闭合孔洞）")
+        _log(f"  预期位置：{_CGAL_EXE_REL}")
+        _log(f"  构建方式：ZMeshMendData/build.bat")
 
 
 def main():
-    """Entry point - builds the plugin UI"""
+    """入口点 - 构建插件 UI"""
     build_ui()
 
 

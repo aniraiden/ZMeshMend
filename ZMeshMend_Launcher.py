@@ -1,5 +1,5 @@
-"""ZMeshMend Launcher
-Load this file via ZBrush: ZScript > Python Scripting > Load
+"""ZMeshMend 启动器
+在 ZBrush 中通过 ZScript > Python Scripting > Load 加载本文件
 """
 
 import os

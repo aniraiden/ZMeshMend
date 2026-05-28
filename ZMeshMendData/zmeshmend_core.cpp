@@ -1,23 +1,23 @@
 /**
- * ZMeshMend CGAL Core v2.0 (GoZ)
- * =================================
- * CGAL-based hole filling engine for the ZMeshMend ZBrush plugin.
+ * ZMeshMend CGAL 核心 v2.0 (GoZ)
+ * ==================================
+ * 基于 CGAL 的孔洞填充引擎，用于 ZMeshMend ZBrush 插件。
  *
- * Reads a GoZ mesh (with PolyGroups, Mask, UVs), fills all boundary holes
- * using CGAL::Polygon_mesh_processing::triangulate_refine_and_fair_hole(),
- * and writes the result back to GoZ.
+ * 读取 GoZ 网格（包含 PolyGroups、Mask、UV），使用
+ * CGAL::Polygon_mesh_processing::triangulate_refine_and_fair_hole()
+ * 填充所有边界孔洞，并将结果写回 GoZ。
  *
- * New fill faces are assigned a new PolyGroup ID (max existing + 1).
- * Original PolyGroups and Mask are preserved.
+ * 新增的填充面将被分配一个新的 PolyGroup ID（已有最大 ID + 1）。
+ * 原有的 PolyGroups 和 Mask 将被保留。
  *
- * Build:
+ * 构建：
  *   mkdir build && cd build && cmake .. && cmake --build . --config Release
  *
- * Usage:
+ * 用法：
  *   zmeshmend_core <input.GoZ> <output.GoZ> [fill.GoZ]
  *
- * If fill.GoZ is specified, only the newly filled faces are written
- * to that file (for use as a ZBrush subtool for PolyGroup merging).
+ * 如果指定了 fill.GoZ，则仅将新填充的面写入该文件
+ * （用于作为 ZBrush 子工具进行 PolyGroup 合并）。
  */
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -419,8 +419,8 @@ int main(int argc, char* argv[])
             FILE* s = fopen("zmeshmend_startup.log", "w");
             if (s) { fprintf(s, "started\n"); fclose(s); }
         }
-        //ZCloseHoles mode: read everything from zmeshmend_config.txt,
-        //input = zmeshmend_export.obj, output = zmeshmend_import.obj.
+        //ZCloseHoles 模式：从 zmeshmend_config.txt 读取所有内容，
+        //输入 = zmeshmend_export.obj，输出 = zmeshmend_import.obj。
         in_path  = "zmeshmend_export.obj";
         out_path = "zmeshmend_import.obj";
 
@@ -431,8 +431,8 @@ int main(int argc, char* argv[])
             while (fgets(line, sizeof(line), cf))
             {
                 int vi = 0; float vf = 0.0f;
-                if (sscanf(line, "maskSharpenPasses=%d", &vi) == 1)      { /*pass*/ }
-                else if (sscanf(line, "maskGrowRings=%d", &vi) == 1)      { /*pass*/ }
+                if (sscanf(line, "maskSharpenPasses=%d", &vi) == 1)      { /*跳过*/ }
+                else if (sscanf(line, "maskGrowRings=%d", &vi) == 1)      { /*跳过*/ }
                 else if (sscanf(line, "removeSmallFragments=%d", &vi) == 1)
                 {
                     if (vi) { opt_min_frac = 0.01; opt_min_faces = 50; }
@@ -443,9 +443,9 @@ int main(int argc, char* argv[])
             fclose(cf);
 
             if (opt_min_frac <= 0.0 && opt_min_faces <= 0)
-                opt_min_frac = opt_min_faces = 0; //both must be set to enable
+                opt_min_frac = opt_min_faces = 0; //两个参数都必须设置才能启用
         }
-        //zero-arg mode: always pause so user can see console output.
+        //零参数模式：始终暂停，以便用户可以看到控制台输出。
         g_pause_on_exit = true;
     }
     else
@@ -473,7 +473,7 @@ int main(int argc, char* argv[])
         }
         else if (!a.empty() && a[0] != '-')
         {
-            // first positional after out_path -> fill_path; second -> debug_obj
+            // out_path 之后的第一个位置参数 -> fill_path；第二个 -> debug_obj
             if (!write_fill_only) { fill_path = a; write_fill_only = true; }
             else if (debug_obj.empty()) { debug_obj = a; }
         }
@@ -518,9 +518,9 @@ int main(int argc, char* argv[])
     }
     else if (zero_arg_mode)
     {
-        //ZScript path: ZBrush Tool:Export writes un-stitched OBJs.
-        //Use read_OBJ + stitch_borders to merge duplicate vertices,
-        //preserving quads so original faces stay in their original form.
+        //ZScript 路径：ZBrush Tool:Export 写入的是未缝合的 OBJ。
+        //使用 read_OBJ + stitch_borders 合并重复顶点，
+        //保留四边形，使原始面保持其原始形式。
         std::ifstream zin(in_path);
         if (!zin || !CGAL::IO::read_OBJ(zin, mesh))
         {
@@ -537,7 +537,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        //Python / CLI path: original read_OBJ, preserves quads and structure.
+        //Python / CLI 路径：原始 read_OBJ，保留四边形和结构。
         std::ifstream in(in_path);
         if (!in || !CGAL::IO::read_OBJ(in, mesh))
         {
@@ -571,7 +571,7 @@ int main(int argc, char* argv[])
         {
             if (opt_full_obj)
             {
-                // Full mesh OBJ - all faces are original (group_1)
+                // 完整网格 OBJ - 所有面都是原始面（group_1）
                 std::ofstream out(out_path);
                 if (!out)
                 {
@@ -588,7 +588,7 @@ int main(int argc, char* argv[])
                     out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
                     vidx[v] = ++vcount;
                 }
-                //Parse original OBJ to preserve PolyGroups via g-lines.
+                //解析原始 OBJ 以通过 g 行保留 PolyGroups。
                 {
                     std::ifstream gs(in_path);
                     std::string line, cur = "orig", last_g;
@@ -762,7 +762,7 @@ int main(int argc, char* argv[])
 
     write_progress(0.85f);
 
-    // ---------- Remove small disconnected fragments ----------
+    // ---------- 移除小型不连通碎片 ----------
     if (opt_min_frac > 0.0 || opt_min_faces > 0)
     {
         std::size_t total = mesh.number_of_faces();
@@ -797,8 +797,8 @@ int main(int argc, char* argv[])
 
                 if (!small_ccs.empty())
                 {
-                    // Refresh original_faces: faces removed below should not appear in
-                    // either fill or original sets when serializing output.
+                    // 刷新 original_faces：下面被移除的面不应出现在
+                    // 序列化输出时的填充面集合或原始面集合中。
                     std::unordered_set<Mesh::Face_index> removed_face_set;
                     for (auto f : mesh.faces())
                     {
@@ -812,7 +812,7 @@ int main(int argc, char* argv[])
                     PMP::remove_isolated_vertices(mesh);
                     mesh.collect_garbage();
 
-                    // Drop removed faces from original_faces tracker
+                    // 从 original_faces 追踪器中移除已删除的面
                     for (auto f : removed_face_set)
                         original_faces.erase(f);
                 }
@@ -832,14 +832,14 @@ int main(int argc, char* argv[])
     }
 
     write_progress(0.88f);
-    // ---------- end fragment removal ----------
+    // ---------- 碎片移除结束 ----------
 
     if (out_is_obj_patch)
     {
         if (opt_full_obj)
         {
-            // Full mesh OBJ with PolyGroup-as-group lines so Tool:Import in
-            // ZBrush rebuilds PolyGroups (orig=1, fill=2).
+            // 完整网格 OBJ，使用 PolyGroup 作为 group 行，
+            // 以便 ZBrush 中的 Tool:Import 重建 PolyGroups（原始=1，填充=2）。
             std::ofstream out(out_path);
             if (!out)
             {
@@ -849,7 +849,7 @@ int main(int argc, char* argv[])
             }
             out << "# ZMeshMend full mesh (PolyGroup preserved + fill)\n";
 
-            // Rebuild a vertex index map (skip removed vertices/faces).
+            // 重建顶点索引映射（跳过已移除的顶点/面）。
             std::map<Mesh::Vertex_index, std::size_t> vidx;
             std::size_t vcount = 0;
             for (auto v : mesh.vertices())
@@ -859,8 +859,8 @@ int main(int argc, char* argv[])
                 vidx[v] = ++vcount;
             }
 
-            //Parse original OBJ g-lines: after read_OBJ + stitch_borders,
-            //CGAL face index i == i-th face line in the OBJ (0-based).
+            //解析原始 OBJ 的 g 行：经过 read_OBJ + stitch_borders 后，
+            //CGAL 面索引 i == OBJ 中第 i 条面行（从 0 开始）。
             std::vector<std::string> orig_groups;
             {
                 std::ifstream gs(in_path);
@@ -874,13 +874,13 @@ int main(int argc, char* argv[])
                 }
             }
 
-            //Collect fill faces separately.
+            //单独收集填充面。
             std::vector<Mesh::Face_index> fill_faces;
             for (auto f : mesh.faces())
                 if (original_faces.find(f) == original_faces.end())
                     fill_faces.push_back(f);
 
-            //Emit original faces: group by original g-group name.
+            //输出原始面：按原始 g-group 名称分组。
             {
                 std::string last_g;
                 for (auto f : mesh.faces())
@@ -897,7 +897,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            //Emit fill faces under a separate group.
+            //在单独的 group 下输出填充面。
             if (!fill_faces.empty())
             {
                 out << "g ZMeshMend_Fill\n";

@@ -1,10 +1,9 @@
-"""ZMeshMend Plugin - Auto-Load Initialization
+"""ZMeshMend 插件 - 自动加载初始化
 
-Place the parent directory of this file in your PYTHONPATH or
-ZBRUSH_PLUGIN_PATH environment variable to auto-load the plugin
-when ZBrush starts.
+把本文件所在目录加到 PYTHONPATH 或 ZBRUSH_PLUGIN_PATH
+环境变量中，ZBrush 启动时会自动加载插件。
 
-Alternatively, load ZMeshMend.py directly via ZScript > Python Scripting > Load.
+也可以直接在 ZScript > Python Scripting > Load 中加载 ZMeshMend.py。
 """
 
 import os
