@@ -1,16 +1,13 @@
 # 分支说明
 
-## 当前分支
-
 | 分支 | 说明 | 状态 |
 |------|------|------|
-| `main` | 主线，稳定版本 | 活跃 |
-| `topology` | 拓扑方向实验：补洞后三角对合并为四边形 | 实验暂停 |
-| `smooth-hole-edges` | 平滑洞口边缘功能 | 开发中 |
+| `main` | 主线 v1.2.0，Python+ZScript 双版本，GoZ 中转 | 活跃 |
+| `topology` | 补洞后三角对合并为四边形 | 实验 |
+| `smooth-hole-edges` | 平滑洞口边缘 | 已合并 main |
 
-## 分支命名规范
+## 分支命名
 
-- `feature/<name>` — 新功能开发
+- `feature/<name>` — 新功能
 - `fix/<name>` — Bug 修复
-- `experiment/<name>` — 实验性功能
-- 或直接使用简短描述性名称
+- 或简短描述性名称

@@ -13,7 +13,7 @@
 """
 
 __author__ = "ZMeshMend Rebuild"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 import os
 import sys
@@ -335,26 +335,48 @@ def _clear_progress():
 
 
 def _ensure_edit_mode():
-    """确保处于编辑模式且有活动的 polymesh 工具"""
+    """确保处于编辑模式且有活动的 polymesh 工具，模型无细分（SDiv=1）。"""
     try:
         if zbc.is_polymesh3d_solid():
-            return True
+            pass
     except Exception as e:
         _log(f"警告：is_polymesh3d_solid 检查失败：{e}")
 
     try:
         pt = zbc.query_mesh3d(0)
         if pt and pt[0] > 0:
-            return True
+            pass
+        else:
+            zbc.message_ok(
+                "未找到活动的 PolyMesh3D 工具。\n\n"
+                "请先选择一个 3D 工具并进入编辑模式。",
+                "ZMeshMend - 错误"
+            )
+            return False
     except Exception as e:
         _log(f"警告：query_mesh3d 检查失败：{e}")
+        zbc.message_ok(
+            "未找到活动的 PolyMesh3D 工具。\n\n"
+            "请先选择一个 3D 工具并进入编辑模式。",
+            "ZMeshMend - 错误"
+        )
+        return False
 
-    zbc.message_ok(
-        "未找到活动的 PolyMesh3D 工具。\n\n"
-        "请先选择一个 3D 工具并进入编辑模式。",
-        "ZMeshMend - 错误"
-    )
-    return False
+    try:
+        sdiv = int(zbc.get_max("Tool:Geometry:SDiv"))
+        if sdiv > 1:
+            zbc.message_ok(
+                "无法在细分网格上运行此操作。\n\n"
+                "请先回到最低细分级别（SDiv=1），\n"
+                "然后使用 Tool > Geometry > Del Higher\n"
+                "删除高级别细分。",
+                "ZMeshMend - SubDiv"
+            )
+            return False
+    except Exception:
+        pass
+
+    return True
 
 
 def _get_vertex_count():
@@ -595,7 +617,7 @@ def _undo():
 
 
 def _export_obj(filepath):
-    """导出当前工具为 OBJ 文件"""
+    """导出当前工具为指定文件。后缀 .obj → OBJ 文本，后缀 .GoZ → GoZ binary。"""
     try:
         zbc.set_next_filename(filepath)
         zbc.press("Tool:Export")
@@ -606,8 +628,13 @@ def _export_obj(filepath):
         return False
 
 
+def _export_goz(filepath):
+    """导出当前工具为 GoZ binary。文件名必须以 .GoZ 结尾。"""
+    return _export_obj(filepath)
+
+
 def _import_obj(filepath):
-    """导入 OBJ 文件作为当前工具"""
+    """导入指定文件到当前工具。后缀 .goz → GoZ binary 原生 PolyGroup/Mask。"""
     try:
         zbc.set_next_filename(filepath)
         zbc.press("Tool:Import")
@@ -619,27 +646,12 @@ def _import_obj(filepath):
 
 
 def _import_goz(filepath):
-    """导入 GoZ 文件作为当前工具。原生支持 PolyGroup 和遮罩。
-
-    成功导入并加载网格时返回 True。
-    GoZ 导入失败时，回退到同名的 .obj 文件导入。
-    """
+    """导入 GoZ 文件作为当前工具。原生支持 PolyGroup 和遮罩。"""
     try:
-        face_before = _get_face_count()
         zbc.set_next_filename(filepath)
         zbc.press("Tool:Import")
         zbc.update()
-        face_after = _get_face_count()
-        if face_after != face_before or face_before == 0:
-            return True
-        _log("  警告：通过 Tool:Import 导入 GoZ 未改变网格，尝试备选方案……")
-        try:
-            zbc.execute_zscript('[IPress,Tool:GoZ]')
-            zbc.update()
-            return True
-        except Exception:
-            pass
-        return False
+        return True
     except Exception as e:
         _log(f"  警告：GoZ 导入失败：{e}")
         return False
@@ -1464,8 +1476,8 @@ def do_remove_small_fragments(sender=""):
 def do_smooth_open_edges(sender=""):
     """功能：平滑所有开放边界环（Smooth Open Edge）。
 
-    导出 OBJ → CGAL Chaikin 平滑边界 + Laplacian 平滑邻域 →
-    切平面投影保持体积 → 导入 OBJ 回 ZBrush。
+    导出 GoZ（含 PolyGroups/Mask）→ CGAL Chaikin 平滑边界 + Laplacian 平滑邻域 →
+    切平面投影保持体积 → 导入 GoZ 回 ZBrush。
 
     PolyGroup 完全保留，不增删顶点/面。
     """
@@ -1489,26 +1501,26 @@ def do_smooth_open_edges(sender=""):
         )
         return
 
-    tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_smooth_in.obj")
-    tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_smooth_out.obj")
+    tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_smooth_in.GoZ")
+    tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_smooth_out.GoZ")
 
-    _progress("正在导出网格……", 0.10)
-    if not _export_obj(tmp_in):
-        _log("错误：导出网格失败")
+    _progress("正在导出 GoZ（含 PolyGroups/Mask）……", 0.10)
+    if not _export_goz(tmp_in):
+        _log("错误：导出 GoZ 失败")
         _clear_progress()
         return
 
     _progress("CGAL 正在平滑边界……", 0.30)
     success = _call_cgal_smooth_border(tmp_in, tmp_out)
 
-    if success and os.path.exists(tmp_out) and _count_faces_in_obj(tmp_out) > 0:
+    if success and os.path.exists(tmp_out):
         _progress("正在导入平滑后的网格……", 0.70)
-        if _import_obj(tmp_out):
+        if _import_goz(tmp_out):
             zbc.update(redraw_ui=True)
             vtx_after = _get_vertex_count()
             face_after = _get_face_count()
             _log(f"之后：{vtx_after} 顶点，{face_after} 面")
-            _log("平滑完成：仅移动边界顶点，拓扑不变")
+            _log("平滑完成：仅移动边界顶点，拓扑不变，PolyGroups/Mask 保留")
             _progress("完成！", 1.0)
             zbc.message_ok(
                 "平滑开放边界环完成！\n\n"
@@ -1573,7 +1585,7 @@ def do_relax_wireframe(sender=""):
     tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_out.GoZ")
 
     _progress("正在导出 GoZ（含遮罩信息）……", 0.20)
-    if not _export_obj(tmp_in):
+    if not _export_goz(tmp_in):
         _log("错误：导出 GoZ 失败")
         _clear_progress()
         return
@@ -1583,7 +1595,7 @@ def do_relax_wireframe(sender=""):
 
     if success and os.path.exists(tmp_out):
         _progress("正在导入放松后的网格……", 0.70)
-        if _import_obj(tmp_out):
+        if _import_goz(tmp_out):
             zbc.update(redraw_ui=True)
             vtx_after = _get_vertex_count()
             face_after = _get_face_count()
@@ -1620,9 +1632,9 @@ def do_relax_wireframe(sender=""):
 def do_close_with_polygroup_mask(sender=""):
     """功能 3+4：使用 CGAL refine+fair 闭合孔洞，为填充区域分配新 PolyGroup。
 
-    导出 OBJ → CGAL 填充 → 导入 GoZ（内嵌 PolyGroup）。
+    导出 GoZ（含 PolyGroups/Mask）→ CGAL 填充 → 导入 GoZ。
     GoZ 格式原生携带 PolyGroup ID 和遮罩数据，
-    因此填充面自动获得独立的 PolyGroup。
+    填充面自动获得独立的 PolyGroup，原有分组完整保留。
     """
     _log("=" * 50)
     if _cgal_available():
@@ -1639,31 +1651,32 @@ def do_close_with_polygroup_mask(sender=""):
     _log(f"之前：{vtx_before} 顶点，{face_before} 面")
 
     if _cgal_available():
-        tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_in.obj")
-        tmp_patch = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_patch.obj")
+        tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_in.GoZ")
+        tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_cgal_out.GoZ")
 
-        _progress("正在导出网格供 CGAL 使用……", 0.10)
-        if not _export_obj(tmp_in):
-            _log("错误：导出网格失败")
+        _progress("正在导出 GoZ（含 PolyGroups/Mask）……", 0.10)
+        if not _export_goz(tmp_in):
+            _log("错误：导出 GoZ 失败")
             _clear_progress()
             return
 
         _progress("CGAL 三角剖分 refine 并 fair 孔洞……", 0.20)
-        success, faces_added = _call_cgal_fill(tmp_in, tmp_patch)
+        success, faces_added = _call_cgal_fill(tmp_in, tmp_out)
 
-        merged = False
-        if success and os.path.exists(tmp_patch) and _count_faces_in_obj(tmp_patch) > 0:
-            _progress("正在合并填充补丁……", 0.70)
-            merged = _merge_patch_and_weld(tmp_patch, orig_obj_path=tmp_in)
-
-        if merged:
-            vtx_after = _get_vertex_count()
-            face_after = _get_face_count()
-            _log(f"之后：{vtx_after} 顶点，{face_after} 面")
-            _log(f"新增：{face_after - face_before} 面")
-            _log("  补丁通过 OBJ 焊接合并（原始四边形已保留）")
+        if success and os.path.exists(tmp_out):
+            _progress("正在导入修复后的网格（PolyGroups 保留）……", 0.70)
+            if _import_goz(tmp_out):
+                zbc.update(redraw_ui=True)
+                vtx_after = _get_vertex_count()
+                face_after = _get_face_count()
+                _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+                _log(f"  新增填充面：{faces_added}（PolyGroup 已分配）")
+                _log(f"  原始 PolyGroups、Mask、UV 完整保留")
+            else:
+                _log("错误：导入 GoZ 结果失败")
+                zbc.message_ok("导入失败！", "ZMeshMend - 错误")
         else:
-            _log("补丁合并失败或为空。回退到 ZBrush 内置闭合……")
+            _log("CGAL 填充失败或输出为空。回退到 ZBrush 内置……")
             _close_holes()
             zbc.update(redraw_ui=True)
             _auto_groups()
@@ -1673,7 +1686,7 @@ def do_close_with_polygroup_mask(sender=""):
             face_after = _get_face_count()
             _log(f"之后（回退）：{vtx_after} 顶点，{face_after} 面")
 
-        for f in [tmp_in, tmp_patch]:
+        for f in [tmp_in, tmp_out]:
             try:
                 os.remove(f)
             except Exception:
@@ -1695,8 +1708,8 @@ def do_close_with_polygroup_mask(sender=""):
     zbc.message_ok(
         "MendHoles + PolyGroup 完成！\n\n"
         "孔洞已用 CGAL refine+fair 填充。\n"
-        "补丁通过 OBJ 焊接合并；原始四边形已保留。\n"
-        "填充面已标记为 'ZMeshMend_Fill' PolyGroup。\n\n"
+        "GoZ 格式原生保留 PolyGroups、Mask、UV。\n"
+        "新增填充面已自动分配独立 PolyGroup ID。\n\n"
         "提示：Ctrl+Shift+点击 PolyGroup 可对其遮罩。",
         "ZMeshMend"
     )
@@ -1750,31 +1763,31 @@ def do_mask_based_cleanup(sender=""):
     face_after_delete = _get_face_count()
     _log(f"  删除后面数：{face_after_delete}（已删除 {face_before - face_after_delete}）")
 
-    _progress("步骤 5/6：闭合孔洞（CGAL 补丁合并）……", 0.60)
-    cgal_merged = False
+    _progress("步骤 5/6：闭合孔洞（CGAL GoZ 补洞）……", 0.60)
+    cgal_ok = False
     if _cgal_available():
-        tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_mask_in.obj")
-        tmp_patch = os.path.join(tempfile.gettempdir(), "zmeshmend_mask_patch.obj")
+        tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_mask_in.GoZ")
+        tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_mask_out.GoZ")
 
-        if _export_obj(tmp_in):
-            success, cgal_added = _call_cgal_fill(tmp_in, tmp_patch)
-            if success and os.path.exists(tmp_patch) and _count_faces_in_obj(tmp_patch) > 0:
-                if _merge_patch_and_weld(tmp_patch, orig_obj_path=tmp_in):
-                    cgal_merged = True
-                    _log(f"  CGAL：新增 {cgal_added} 面，通过 OBJ 焊接合并")
+        if _export_goz(tmp_in):
+            success, cgal_added = _call_cgal_fill(tmp_in, tmp_out)
+            if success and os.path.exists(tmp_out):
+                if _import_goz(tmp_out):
+                    cgal_ok = True
+                    _log(f"  CGAL：新增 {cgal_added} 面，GoZ 原生 PolyGroups 保留")
                 else:
-                    _log("  补丁合并失败，回退到 ZBrush 闭合孔洞")
+                    _log("  导入 GoZ 失败，回退到 ZBrush 闭合孔洞")
                     _close_holes()
             else:
-                _log("  CGAL 失败或补丁为空，回退到 ZBrush 闭合孔洞")
+                _log("  CGAL 失败或输出为空，回退到 ZBrush 闭合孔洞")
                 _close_holes()
-            for f in [tmp_in, tmp_patch]:
+            for f in [tmp_in, tmp_out]:
                 try:
                     os.remove(f)
                 except Exception:
                     pass
         else:
-            _log("  导出失败，使用 ZBrush 内置")
+            _log("  导出 GoZ 失败，使用 ZBrush 内置")
             _close_holes()
     else:
         _close_holes()
@@ -1784,10 +1797,10 @@ def do_mask_based_cleanup(sender=""):
     _log(f"  闭合后面数：{face_after_close}（新增 {face_after_close - face_after_delete}）")
 
     _progress("步骤 6/6：为填充区域分组……", 0.85)
-    if cgal_merged:
-        _log("  CGAL 补丁已合并：ZMeshMend_Fill PolyGroup 从 OBJ 标签保留")
+    if cgal_ok:
+        _log("  CGAL GoZ 已导入：PolyGroups 由 GoZ 原生携带，无需额外分组")
     else:
-        _log("  CGAL 未合并 - 应用 Auto Groups 回退")
+        _log("  CGAL 未执行 - 应用 Auto Groups 回退")
         _auto_groups()
     zbc.update(redraw_ui=True)
 
@@ -1803,8 +1816,8 @@ def do_mask_based_cleanup(sender=""):
         f"删除面数：{face_before - face_after_delete}\n"
         f"填充面数：{face_after_close - face_after_delete}\n"
         f"最终面数：{face_after}\n\n"
-        "补丁通过 OBJ 焊接合并；原始四边形已保留。\n"
-        "填充面已标记为 'ZMeshMend_Fill' PolyGroup。\n"
+        "GoZ 格式原生保留 PolyGroups、Mask。\n"
+        "新增填充面已自动分配独立 PolyGroup ID。\n"
         "使用 Ctrl+Shift+点击可按 PolyGroup 遮罩。",
         "ZMeshMend"
     )

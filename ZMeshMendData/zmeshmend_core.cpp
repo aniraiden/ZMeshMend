@@ -589,8 +589,12 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
     // mask 透传，mrgb 不输出（避免给补洞顶点写默认值污染 PolyPaint）。
     out_goz.m_mask = in_goz.m_mask;
     out_goz.m_mrgb.clear();
+    // UV/Crease 与 face 数绑定，必须在追加填充面后扩展到新长度，否则
+    // writeGoZBloc 按 m_faceCount 读 buffer 会越界，整个 GoZ 写出失败。
+    // 这里先继承原始数据，等填充面追加完后再 resize 补默认值。
     out_goz.m_uvs = in_goz.m_uvs;
     out_goz.m_uvFaceType = in_goz.m_uvFaceType;
+    out_goz.m_crease = in_goz.m_crease;
 
     // 顶点：先复制原始 GoZ 顶点（位置可能被 fair 微调，从 mesh 取最新位置），
     // 再为 mesh 中超出 in_goz.m_vertexCount 的顶点追加坐标。
@@ -618,22 +622,26 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
         out_goz.m_mrgb.resize(total_v, default_mrgb);
     }
 
-    // 面：原始 face4 直接复用，新增 fill 面以 face4 形式追加（tri 时第 4 索引 = -1）。
-    short max_group = 0;
-    if (!in_goz.m_groups.empty())
+    // 面处理：如果 in_goz 带了有效 GROUPS_LIST 就保留并给填充面分新 group；
+    // 否则不写 GROUPS_LIST，让 ZBrush 保持原有 PolyGroup（ZScript Tool:Export 不写 groups）。
+    bool has_input_groups = !in_goz.m_groups.empty() && (int)in_goz.m_groups.size() == in_goz.m_faceCount;
+    short new_group = 2;
+    if (has_input_groups)
     {
+        short max_group = 0;
         for (int fi = 0; fi < in_goz.m_faceCount; ++fi)
             if (in_goz.m_groups[fi] > max_group)
                 max_group = in_goz.m_groups[fi];
+        new_group = max_group > 0 ? (short)(max_group + 1) : (short)2;
     }
-    short new_group = max_group > 0 ? (short)(max_group + 1) : (short)2;
 
     // 1) 原始 GoZ 面整体保留（顶点索引不变，因为我们用的就是 mesh 顶点 0..orig_vc-1）。
     out_goz.m_faceCount = in_goz.m_faceCount;
-    out_goz.m_vertexIndices = in_goz.m_vertexIndices; // 4 * face count
-    out_goz.m_groups = in_goz.m_groups;
-    if ((int)out_goz.m_groups.size() != out_goz.m_faceCount)
-        out_goz.m_groups.assign(out_goz.m_faceCount, 1);
+    out_goz.m_vertexIndices = in_goz.m_vertexIndices;
+    if (has_input_groups)
+        out_goz.m_groups = in_goz.m_groups;
+    else
+        out_goz.m_groups.clear();
 
     // 2) 收集 CGAL mesh 中的"新增面"（不在 orig_faces 中），以 face4 quad 形式追加。
     int added = 0;
@@ -651,10 +659,30 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
         out_goz.m_vertexIndices.push_back(v1);
         out_goz.m_vertexIndices.push_back(v2);
         out_goz.m_vertexIndices.push_back(v3);
-        out_goz.m_groups.push_back(new_group);
+        if (has_input_groups)
+            out_goz.m_groups.push_back(new_group);
         ++added;
     }
     out_goz.m_faceCount += added;
+
+    // 对齐所有 per-face / per-vertex 数组到新长度。任何一个 size != m_faceCount/m_vertexCount
+    // 都会让 writeGoZBloc 越界读 buffer，导致 writeMesh 整个失败。
+    // - m_uvs:   UV4=每面 8 floats / UV3=每面 6 floats，按 m_uvFaceType 区分
+    // - m_crease: 每面 1 byte
+    // - m_mask:  每顶点 2 bytes (uint16)；前面顶点循环已 resize total_v，这里再保险一次
+    if (!out_goz.m_uvs.empty())
+    {
+        int per_face_floats = (out_goz.m_uvFaceType == (int)GoZ_TAG_UV3_LIST) ? 6 : 8;
+        size_t want = (size_t)out_goz.m_faceCount * per_face_floats;
+        if (out_goz.m_uvs.size() != want)
+            out_goz.m_uvs.resize(want, 0.0f);
+    }
+    if (!out_goz.m_crease.empty() && (int)out_goz.m_crease.size() != out_goz.m_faceCount)
+        out_goz.m_crease.resize(out_goz.m_faceCount, 0);
+    if (!out_goz.m_mask.empty() && (int)out_goz.m_mask.size() != out_goz.m_vertexCount)
+        out_goz.m_mask.resize(out_goz.m_vertexCount, 0xFFFF);
+    if (!out_goz.m_groups.empty() && (int)out_goz.m_groups.size() != out_goz.m_faceCount)
+        out_goz.m_groups.resize(out_goz.m_faceCount, new_group);
 
     // 不再向 face_to_goz_face 处写白色 mrgb；保持原模型外观。
     (void)face_to_goz_face;

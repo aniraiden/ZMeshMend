@@ -6,7 +6,7 @@
 
 ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 CGAL 智能曲率感知填充、碎片移除、遮罩驱动的模型清理、平滑开放边缘和全局布线放松。
 
-提供 **Python** 和 **ZScript** 两种版本，互不依赖。
+**v1.2.0**: 全面切换 GoZ binary 中转（原生携带 PolyGroup/Mask/UV），Python + ZScript 双版本统一。
 
 ## 下载
 
@@ -36,6 +36,7 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 | **Remove Small Fragments** | CGAL 连通性分析自动清理孤立碎片 |
 | **Smooth Open Edge** | 边界 Chaikin + Laplacian 多圈平滑，法线投影保持体积 |
 | **Relax Wireframe** | Laplacian 平滑 + 投影回原表面，边界顶点保护，保持体积和细节 |
+| **SubDiv Detection** | SDiv>1 时自动阻断操作，避免细分网格 GoZ 导入导致坐标偏移 |
 
 
 ---
@@ -130,26 +131,23 @@ ZMeshMend/
 │   ├── ZMeshMend_ZScript.txt          # ZScript 版主逻辑
 │   ├── ZMeshMend_config.txt           # 共享配置
 ├── doc/
-│   ├── project-reference.md            # 项目权威参考手册
-│   ├── architecture.md                 # 架构文档
+│   ├── project-reference.md            # 项目权威参考
 │   ├── roadmap.md                      # 开发路线图
-│   ├── smooth-open-edge.md             # 平滑边缘功能规划
+│   ├── goz-pipeline-guide.md           # GoZ 管线完全指南
 │   └── branches.md                     # 分支说明
 ├── reference/                          # 外部参考资料（只读）
-│   ├── ZFileUtils_2021_01A/            # ZFileUtils 官方示例
-│   └── zscripting.txt                  # ZScript 语法参考
+│   ├── ZFileUtils_2021_01A/
+│   └── zscripting.txt
 ├── ZMeshMendData/
-│   ├── CMakeLists.txt                 # C++ 构建配置
-│   ├── build.bat                      # 一键编译（旧方式）
-│   ├── run_build.ps1                  # 一键编译（推荐）
+│   ├── CMakeLists.txt
+│   ├── build.bat / run_build.ps1      # 一键编译
 │   ├── zmeshmend_core.cpp             # CGAL 孔洞填充引擎
 │   ├── zmeshmend_core.exe             # 编译产物
-│   ├── ZFileUtils64.dll               # ZScript 文件工具 DLL
-│   ├── ZMeshMend_pipeline.py          # Python 管线辅助
 │   ├── GoZ_Mesh.cpp / .h              # GoZ 网格读写
 │   ├── GoZ_Utils.cpp / .h             # GoZ 工具函数
-│   ├── GoZ_Binary.h / GoZ_Config.h    # GoZ 格式定义
-│   └── *.dll                          # CGAL 运行时依赖
+│   ├── GoZ_Binary.h / GoZ_Config.h    # GoZ 格式定义（Pixologic SDK）
+│   ├── ZFileUtils64.dll               # ZScript 文件工具 DLL
+│   └── *.dll                          # CGAL 运行时
 
 ```
 
@@ -179,9 +177,9 @@ ZMeshMend/
 
 [中文](#zmeshmend) | [English](#zmeshmend-1)
 
-A ZBrush plugin for automatic mesh hole repair. Close all open holes with one click, featuring CGAL intelligent curvature-aware filling, fragment removal, mask-driven model cleanup, smooth open edge processing, and global wireframe relaxation.
+A ZBrush plugin for automatic mesh hole repair with CGAL curvature-aware filling, fragment removal, mask-driven cleanup, smooth open edge processing, and global wireframe relaxation.
 
-Available in both **Python** and **ZScript** versions, independent of each other.
+**v1.2.0**: Fully migrated to GoZ binary pipeline (native PolyGroup/Mask/UV), Python + ZScript unified.
 
 ## Download
 
@@ -210,6 +208,7 @@ Visit [GitHub Releases](https://github.com/aniraiden/ZMeshMend/releases) to down
 | **Remove Small Fragments** | CGAL connectivity analysis for automatic isolated fragment cleanup |
 | **Smooth Open Edge** | Boundary Chaikin + Laplacian multi-ring smooth with normal projection |
 | **Relax Wireframe** | Laplacian smooth + snap to reference surface, boundary vertex protection |
+| **SubDiv Detection** | Blocks operations when SDiv>1 to prevent GoZ import coordinate drift |
 
 ---
 
@@ -263,6 +262,8 @@ Both versions share the same configuration file `ZMeshMend/ZMeshMend_config.txt`
 | `fragmentMinFaces` | 50 | Absolute minimum face count to retain a fragment |
 | `smoothIterations` | 2 | Smooth open edge iterations (1-20) |
 | `smoothRings` | 3 | Smooth open edge inward rings (1-20) |
+| `relaxIterations` | 3 | Relax iteration count (1-20) |
+| `relaxFactor` | 1.0 | Relax damping factor (0.1-1.0) |
 
 ZScript version can also adjust settings directly in the panel's Settings sub-panel.
 
@@ -301,26 +302,23 @@ ZMeshMend/
 │   ├── ZMeshMend_ZScript.txt          # ZScript version main logic
 │   ├── ZMeshMend_config.txt           # Shared configuration
 ├── doc/
-│   ├── project-reference.md            # Project authoritative reference
-│   ├── architecture.md                 # Architecture document
+│   ├── project-reference.md            # Project reference
 │   ├── roadmap.md                      # Development roadmap
-│   ├── smooth-open-edge.md             # Smooth open edge spec
+│   ├── goz-pipeline-guide.md           # GoZ pipeline guide
 │   └── branches.md                     # Branch overview
 ├── reference/                          # External reference (read-only)
-│   ├── ZFileUtils_2021_01A/            # ZFileUtils official examples
-│   └── zscripting.txt                  # ZScript syntax reference
+│   ├── ZFileUtils_2021_01A/
+│   └── zscripting.txt
 ├── ZMeshMendData/
-│   ├── CMakeLists.txt                 # C++ build configuration
-│   ├── build.bat                      # One-click build (legacy)
-│   ├── run_build.ps1                  # One-click build (recommended)
+│   ├── CMakeLists.txt
+│   ├── build.bat / run_build.ps1      # One-click build
 │   ├── zmeshmend_core.cpp             # CGAL hole filling engine
 │   ├── zmeshmend_core.exe             # Build output
-│   ├── ZFileUtils64.dll               # ZScript file utility DLL
-│   ├── ZMeshMend_pipeline.py          # Python pipeline helper
 │   ├── GoZ_Mesh.cpp / .h              # GoZ mesh I/O
 │   ├── GoZ_Utils.cpp / .h             # GoZ utility functions
-│   ├── GoZ_Binary.h / GoZ_Config.h    # GoZ format definitions
-│   └── *.dll                          # CGAL runtime dependencies
+│   ├── GoZ_Binary.h / GoZ_Config.h    # GoZ format (Pixologic SDK)
+│   ├── ZFileUtils64.dll               # ZScript file utility DLL
+│   └── *.dll                          # CGAL runtime
 ```
 
 ## Dependencies

@@ -234,15 +234,27 @@ Python/CLI 路径：
 
 ```
 输入：GoZ_Mesh::readMesh() — 读取 GoZ 二进制格式
-  - 支持顶点/面/PolyGroup/Mask/UV
+  - 支持顶点/面/PolyGroup/Mask/UV/Crease
   - 自动转换为 CGAL Surface_mesh（仅三角面）
 
-输出（补洞模式）：
-  - GoZ 输出：build_output_goz() — 带 PolyGroup 标记
-  - OBJ 输出（--full-obj）：group_1 = 原始面，group_2 = 填充面
+输出（补洞模式 build_output_goz）：
+  - 策略：复用原始 face4 整段，仅追加填充面（三角→face4 v3=-1）
+  - 原始 quad/tri 拓扑完全保留，不被三角化
+  - 追加填充面分配新 PolyGroup（max_group+1）
+  - UV/Crease：继承原始数据后 resize 到新 face 数，新面填默认值
+  - Mask：继承原始数据后 resize 到新 vertex 数，新顶点填 0xFFFF
+  - MRGB：清空不输出（避免补洞顶点被涂白色 PolyPaint）
+  - 关键修复（v1.2.0）：m_uvs/m_crease 必须对齐到新 m_faceCount，
+    否则 writeGoZBloc 按新 count 读 buffer 越界，writeMesh 返回 false
 
-输出（纯平滑模式）：
-  - OBJ 输出：保留原始 PolyGroup（从原 OBJ 的 'g' 行重新映射）
+输出（纯平滑/放松模式）：
+  - GoZ 输出：拷贝 in_goz 全部元数据，仅替换顶点坐标（m_mrgb.clear()）
+  - 顶点/面数不变，PolyGroup/Mask 完整保留
+
+GoZ writeMesh 写出顺序（不可变）：
+  MESH → MATERIAL → FLAGS → POINTS → FACE → UV → MASK → MRGB → GROUPS
+  → TEXTURE_MAP → NORMAL_MAP → DISPLACEMENT_MAP → CREASE → END_OF_FILE
+  任何一个 block 的 count 与 buffer 实际 size 不匹配，都会导致写出失败
 ```
 
 ### 5.2 Python 插件（ZMeshMend.py）
@@ -290,15 +302,19 @@ ZBrush 内置 Close Holes 作为 CGAL 失败时的回退方案
   2. 校验 temp 文件存在（FileExists）
   3. 删除旧的 zmeshmend_config.txt（FileDelete）
   4. 原子重命名 temp → config（FileRename）
-  5. LaunchAppWithFile 启动 EXE（零参数模式）
-  6. EXE 在 zero-arg 模式下：
+  5. [FileNameSetNext,expPath] → [IPress,Tool:Export] 导出 GoZ binary
+     （后缀 .goz，ZBrush 自动写 GoZb 格式，含 MASK16_LIST + GROUPS_LIST）
+  6. LaunchAppWithFile 启动 EXE（零参数模式）
+  7. EXE 在 zero-arg 模式下：
      - 切换到自身所在目录（SetCurrentDirectoryA）
      - 读取 zmeshmend_config.txt
-     - 读取 zmeshmend_export.obj → stitch_borders → 处理 → 输出 zmeshmend_import.obj
+     - 读取 zmeshmend_export.goz → 处理 → 输出 zmeshmend_import.goz
+  8. [FileNameSetNext,impPath] → [IPress,Tool:Import] 导入结果
 
 桥接方式：配置文件（不是 bat 文件、不是 CLI 参数）
-EXE 启动方式：ZFileUtils64.dll LaunchAppWithFile → #exePath（直接启动 EXE，不通过 bat）
+EXE 启动方式：ZFileUtils64.dll LaunchAppWithFile → #exePath
 配置文件写入：MemSaveToFile → temp file → FileRename（原子操作）
+中转格式：GoZ binary（.goz），原生携带 PolyGroup/Mask/UV/Crease
 ```
 
 **禁止事项**：
@@ -346,8 +362,17 @@ SaveSmoothConfig：
 
 | 模式 | 触发条件 | 输入 | 参数来源 | 使用方 |
 |------|----------|------|----------|--------|
-| **Zero-arg** | `argc < 3` | `zmeshmend_export.obj` / `zmeshmend_import.obj` | `zmeshmend_config.txt` | ZScript |
+| **Zero-arg** | `argc < 3` | `zmeshmend_export.goz` / `zmeshmend_import.goz` | `zmeshmend_config.txt` | ZScript |
 | **CLI** | `argc >= 3` | `argv[1]` / `argv[2]` | 命令行参数 | Python |
+
+Zero-arg 模式下，EXE 自动 `SetCurrentDirectoryA` 到自身所在目录，
+然后读取 `zmeshmend_export.goz`（GoZ binary，含 mask/groups），
+处理后写入 `zmeshmend_import.goz`。
+
+CLI 模式下，支持 GoZ 和 OBJ 两种输入格式。EXE 先尝试
+`GoZ_Mesh::readMesh` 解析，失败则回退到 OBJ `read_OBJ`。
+输出格式由文件后缀决定：`.goz` 走 `build_output_goz` / `writeMesh`，
+`.obj` 走标准 OBJ 写入。
 
 ### 6.2 配置变量对照表
 

@@ -1,6 +1,6 @@
 # 开发路线图
 
-> 当前版本：v1.2.0 | 最后更新：2026-05-30
+> 当前版本：v1.2.0 | 最后更新：2026-05-31
 
 ## 已完成功能
 
@@ -14,18 +14,24 @@
 - [x] 平滑开放边缘（smooth_open_borders）
 - [x] **全局布线放松（Wireframe Relax）** — oaRelaxVerts 算法
 - [x] **GoZ binary 中转方案**（双向：Export/Import 含 mask/uv/groups/mrgb）
+  - [x] ZScript 端：`[FileNameSetNext, .goz]` + `Tool:Export/Import` + `LaunchAppWithFile`
+  - [x] Python 端：`zbc.set_next_filename(.goz)` + `subprocess.run`（v1.2.0 全面切换）
 - [x] **补洞输出保留 quad 拓扑** — build_output_goz 复用原 face4
 - [x] **SubDiv 检测阻断** — SDiv>1 时拒绝操作
+- [x] **GoZ writeMesh buffer 对齐修复** — m_uvs/m_crease/m_mask/m_groups 自动 resize 到新 face/vertex 数
+- [x] **GoZ 管线完全指南** → [doc/goz-pipeline-guide.md](goz-pipeline-guide.md) + `.trae/skills/zbrush-goz-pipeline/`
+- [x] **Python SubDiv 检测** — `_ensure_edit_mode()` 加 SDiv>1 阻断，与 ZScript 一致
 
 ### 核心架构
 
 ```
 ZBrush ──Tool:Export(.goz)──→ zmeshmend_core.exe ──Tool:Import(.goz)──→ ZBrush
           含 MASK16_LIST                CGAL PMP 处理              含 PolyGroups
+          含 GROUPS_LIST                                          含 Mask
 ```
 
-- Python 端：`zbc.set_next_filename` + `zbc.press("Tool:Export/Import")` + `subprocess.run`
-- ZScript 端：`[FileNameSetNext]` + `[IPress,Tool:Export/Import]` + `ZFileUtils LaunchAppWithFile`
+- Python 端：`zbc.set_next_filename(.goz)` + `zbc.press("Tool:Export/Import")` + `subprocess.run`
+- ZScript 端：`[FileNameSetNext, .goz]` + `[IPress,Tool:Export/Import]` + `ZFileUtils LaunchAppWithFile`
 - 统一 GoZ binary 格式（magic `GoZb`），ZBrush 凭后缀 `.goz` 自动识别
 
 ### 放松算法关键设计
@@ -34,24 +40,15 @@ ZBrush ──Tool:Export(.goz)──→ zmeshmend_core.exe ──Tool:Import(.go
 - 边界顶点固定 120 个，内部顶点放松（Jacobi 迭代 + OpenMP `schedule(dynamic,256)`）
 - edge_neighbors 参数：从 GoZ 原始 face4 边邻居（不含 quad 对角线），CGAL halfedge 回退
 
-## 代码审查修复（2026-05-30）
+## v1.2.0 关键修复
 
 | 文件 | 问题 | 修复 |
 |------|------|------|
-| `ZMeshMend.py` L190 | `_call_cgal_fill` 异常返回缺元组元素 | `return False` → `return False, -1` |
-| `ZMeshMend.py` L253 | `_call_cgal_relax_wireframe` 多返元素导致 bool 反转 | `return False, -1` → `return False` |
-| `ZMeshMend.py` L16 | `__version__` 写 `1.1.0` 实际 `1.2.0` | 统一为 `1.2.0` |
-| `ZMeshMend.py` | 14 个死函数约 300 行 | 全部删除 |
-| `GoZ_Utils.cpp` | `ftell` 返回值未检查（损坏文件 → `new char[-1]` 崩溃） | 加 `if (fileSize <= 0)` 守卫 |
-| `zmeshmend_core.cpp` L501 | `load_goz_to_cgal` FACE4 stride 无防御 | 加 `vertexIndices.size() < faceCount*4` 检查 |
-| `zmeshmend_core.cpp` L764 | `write_fill_only_goz` stride 3/4 不匹配 | `src_fi*3` → `src_fi*4` |
+| `ZBrush` 行为 | SDiv>1 时 GoZ 导入重新细分导致 Y 轴偏移 | Python/ZScript 双端加 SDiv>1 阻断 |
+| `zmeshmend_core.cpp` | build_output_goz 追加面后 m_uvs/m_crease 未对齐 → writeMesh 失败 | 自动 resize 到新 faceCount |
+| `ZMeshMend.py` | `_import_goz` 面数不变时假阴性弹窗（smooth/relax） | 去掉面数变化判断 |
 | `GoZ_Mesh.cpp` | 5 处 `vector<char>(count)` 无负数防护 | `if (count)` → `if (count > 0)` |
-| `zmeshmend_core.cpp` L361 | `Mesh ref_mesh` 大模型栈溢出 | `unique_ptr<Mesh>` 堆分配 |
-| `ZMeshMend_ZScript.txt` L232 | `[Note]` icon=4 无效值 | 改为 2（错误图标） |
-| `ZMeshMend_ZScript.txt` | `tmpPath`/`sdivMax` 从未 `[VarDef]` | 添加声明 |
-| `ZMeshMend_ZScript.txt` | `SaveConfig` 三处 FileRename 返回值未检查 | 加 `[If,err!=0,[Note...]]` |
-| `ZMeshMend_ZScript.txt` | `LaunchAppWithFile` err 未检查 | 加错误提示 + `[Exit]` |
-| `ZMeshMend_ZScript.txt` | 错误消息写"OBJ"实际".goz" | 改为 "GoZ not created" |
+| `ZMeshMend_ZScript.txt` | HDivider 不存在、Note icon 无效等 | SDiv、图标值修正 |
 
 ## 后续规划
 
