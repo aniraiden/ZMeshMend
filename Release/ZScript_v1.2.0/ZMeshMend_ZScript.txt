@@ -1,0 +1,521 @@
+//ZMeshMend ZScript Plugin - CGAL hole filling for ZBrush 2021+
+//Calls ZFileUtils64.dll + zmeshmend_core.exe directly (no Python required).
+//Mirror of ZFileUtils_TestZScript_2021.txt structure.
+
+//load this file through the ZScript:Load button
+//a new "ZMeshMend" sub-palette will appear in the ZPlugin palette
+
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~VARIABLES
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[VarDef,isMac,0]//do we have a Mac or PC
+[VarDef,Zvers,0]//ZBrush version
+[VarDef,dllPath,""]//ZFileUtils plugin DLL path
+[VarDef,dllVersion,0]//plugin DLL version
+[VarDef,err,0]//standard error
+[VarDef,lBytes,0]//bytes written by MemWriteString
+[VarDef,scriptPath,""]//full path to this zscript
+[VarDef,scriptDir,""]//folder containing this zscript
+[VarDef,dataDir,""]//ZMeshMendData folder path
+[VarDef,exePath,""]//path to zmeshmend_core.exe
+[VarDef,batPath,""]//path to launcher batch
+[VarDef,expPath,""]//path to exported OBJ
+[VarDef,impPath,""]//path to imported GoZ (preserves PolyGroups)
+[VarDef,expName,"zmeshmend_export.obj"]
+[VarDef,impName,"zmeshmend_import.obj"]
+[VarDef,configPath,""]//path to ZMeshMend_config.txt
+[VarDef,batCmd,""]//batch file contents
+[VarDef,cfgBuf,""]//config file text buffer
+[VarDef,q,""]
+[VarDef,nl,""]
+
+//Persistent settings (mirrored from ZMeshMend.py CONFIG dict)
+[VarDef,gPasses,1]//maskSharpenPasses (0-5)
+[VarDef,gRings,1]//maskGrowRings (0-5)
+[VarDef,gRemoveFrag,1]//removeSmallFragments switch (0/1)
+[VarDef,gMinFrac,0.01]//fragmentMinFraction (0.0-0.5)
+[VarDef,gMinFaces,50]//fragmentMinFaces (1-500)
+[VarDef,gSmoothIter,2]//smoothIterations (1-20)
+[VarDef,gSmoothRings,3]//smoothRings (1-20)
+[VarDef,gRelaxIter,3]//relaxIterations (1-20)
+
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~ROUTINES
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+//Standard system check - call whenever plugin is reloaded
+[RoutineDef, CheckSystem,
+	//check ZBrush version
+	[VarSet,Zvers,[ZBrushInfo,0]]
+	[If,[Val,Zvers] >= 2021.0,,
+		[Note,"ZMeshMend requires ZBrush 2021 or later.",,3,4737096,,300]
+		[Exit]
+	]
+	[VarSet,isMac, [ZBrushInfo,6]]	//check Mac or PC
+	//Make sure we have the DLL and set its path
+	[If,[ZBrushInfo,16]==64,//64 bit
+		[If,isMac,
+			[VarSet,dllPath,"ZMeshMendData/ZFileUtils.lib"]
+		,
+			[VarSet,dllPath,"ZMeshMendData/ZFileUtils64.dll"]
+		]
+	,//else 32 bit - no longer supported
+		[Note,"ZMeshMend requires 64-bit ZBrush.",,3,4737096,,300]
+		[Exit]
+	]
+	[If, [FileExists, [Var,dllPath]],
+		//check that correct version
+		[VarSet, dllVersion, [FileExecute, [Var,dllPath], Version]]
+		[If, [Val,dllVersion] >= 8.0,
+			//OK
+		,//else earlier version
+			[Note,"ZFileUtils DLL is an earlier version which does not support this plugin."]
+			[Exit]
+		]
+	, //else no DLL
+		[Note,"ZFileUtils DLL could not be found at ZMeshMendData. Please re-install the plugin."]
+		[Exit]
+	]
+]//end routine
+
+//Resolve absolute paths to all data files
+[RoutineDef, ResolvePaths,
+	[VarSet,q,[StrFromAsc,34]]
+	//Use CRLF (CR=13, LF=10) so .bat files are interpreted as multi-line by cmd.
+	[VarSet,nl,[StrMerge,[StrFromAsc,13],[StrFromAsc,10]]]
+	//get the full path to this script file
+	[VarSet,scriptPath,[FileNameResolvePath,"ZMeshMend_ZScript.txt"]]
+	//extract directory portion (FileNameExtract mode 1 = path only)
+	[VarSet,scriptDir,[FileNameExtract,scriptPath,1]]
+	//build subfolder paths
+	[VarSet,dataDir,[StrMerge,scriptDir,"ZMeshMendData/"]]
+	[VarSet,exePath,[StrMerge,dataDir,"zmeshmend_core.exe"]]
+	[VarSet,expPath,[StrMerge,dataDir,expName]]
+	//Output as OBJ - ZBrush Tool:Import does NOT recognize .GoZ extension.
+	//core.exe writes full mesh OBJ with 'g group_1' (orig) / 'g group_2' (fill)
+	//so PolyGroups are preserved on import.
+	[VarSet,impPath,[StrMerge,dataDir,impName]]
+	[VarSet,batPath,[StrMerge,dataDir,"zmeshmend_run.bat"]]
+	[VarSet,configPath,[StrMerge,dataDir,"zmeshmend_config.txt"]]
+]
+
+
+//Load configuration from ZMeshMend_config.txt
+[RoutineDef, LoadConfig,
+	[If,[FileExists,configPath],
+		[If,[MemGetSize,ZMM_CfgMem],
+			[MemDelete,ZMM_CfgMem]
+		]
+		//Read config file into memblock
+		[MemCreate,ZMM_CfgMem,4096,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRead",#configPath,,ZMM_CfgMem]]
+		[If,err == 0,
+			[VarSet,cfgBuf,""]
+			[MemReadString,ZMM_CfgMem,cfgBuf,0,1]
+			//Note: ZScript can't easily parse key=value text.
+			//We rely on SaveConfig writing all keys; LoadConfig is best-effort.
+			//Defaults already set in [VarDef] survive if parsing skipped.
+		]
+		[MemDelete,ZMM_CfgMem]
+	,
+		//No config file yet - write defaults
+		[RoutineCall, SaveConfig]
+	]
+]
+
+
+//Save current settings to zmeshmend_config.txt using atomic temp+rename.
+//Writes to a temp file first, then renames to avoid partial/stale reads.
+[RoutineDef, SaveConfig,
+	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration",nl,"# Edit values as needed.",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of mask sharpen passes before grow",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"maskSharpenPasses=",gPasses,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of rings to grow mask before deletion",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"maskGrowRings=",gRings,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Remove small disconnected fragments (1=yes, 0=no)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"removeSmallFragments=",gRemoveFrag,nl,nl]]
+	[If, gRemoveFrag==1,
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Minimum fraction of total faces to keep a fragment",nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"fragmentMinFraction=",gMinFrac,nl,nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Minimum absolute face count to keep a fragment",nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"fragmentMinFaces=",gMinFaces,nl]]
+	]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Smooth border mode (1=smooth only, 0=normal fill)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothBorder=0",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax mode (1=relax, 0=normal)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxWireframe=0",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth iterations (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothIterations=",gSmoothIter,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth rings inward (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
+
+	//Delete temp first
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	//Write cfgBuf to temp file
+	[If,[MemGetSize,ZMM_CfgMem],
+		[MemDelete,ZMM_CfgMem]
+	]
+	[MemCreate,ZMM_CfgMem,4096,0]
+	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
+	[MemDelete,ZMM_CfgMem]
+	//Verify temp was written, then atomically rename to config
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
+]
+
+//Save config with smoothBorder=1 enabled for standalone smooth mode.
+[RoutineDef, SaveSmoothConfig,
+	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration (Smooth)",nl,"# Auto-generated for smooth operation.",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothBorder=1",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of boundary smooth iterations",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothIterations=",gSmoothIter,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of rings to smooth inward",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl]]
+
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	[If,[MemGetSize,ZMM_CfgMem],
+		[MemDelete,ZMM_CfgMem]
+	]
+	[MemCreate,ZMM_CfgMem,4096,0]
+	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
+	[MemDelete,ZMM_CfgMem]
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
+]
+
+//Verify Edit mode with a 3D tool
+[RoutineDef, CheckEdit,
+	[If, [IGet, Transform:Edit] == 0,
+		[Note, "Please enter Edit mode with a 3D tool first.", , 3]
+		[Exit]
+	]
+]
+
+
+//Run zmeshmend_core.exe via direct LaunchAppWithFile (with args).
+//Output is GoZ format - PolyGroups (orig=1, fill=2) preserved on import.
+[RoutineDef, RunCGAL,
+	[RoutineCall, CheckSystem]
+	[RoutineCall, ResolvePaths]
+	//ensure exe exists
+	[If,[FileExists,exePath],,
+		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
+		[Exit]
+	]
+
+	//1. export the current mesh to OBJ
+	[FileNameSetNext, expPath]
+	[IPress, Tool:Export]
+
+	//1b. verify export succeeded
+	[If,[FileExists,expPath],,
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
+		[Exit]
+	]
+
+	//2. delete any stale output
+	[If,[FileExists,impPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
+	]
+
+	//3. save config so core.exe reads settings from zmeshmend_config.txt
+	[RoutineCall, SaveConfig]
+
+	//4. launch core.exe via ZFileUtils64.dll LaunchAppWithFile.
+[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+
+	//5. wait for user to confirm completion
+	[Note, [StrMerge,"CGAL is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
+
+	//7. import the GoZ result (PolyGroups preserved)
+	[If,[FileExists,impPath],
+		[FileNameSetNext, impPath]
+		[IPress, Tool:Import]
+		[Note, "CGAL fill imported (PolyGroup tagged).", , 2]
+	,
+		[VarSet,cfgBuf,[StrMerge,"CGAL output not found at:",nl,impPath,nl,nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"Possible causes:",nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"1. core.exe failed - check console output.",nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"2. Missing CGAL runtime DLLs in ZMeshMendData.",nl,nl]]
+		[VarSet,cfgBuf,[StrMerge,cfgBuf,"Falling back to ZBrush Close Holes."]]
+		[Note,cfgBuf,,3,4737096,,500]
+		[IPress, Tool:Geometry:Modify Topology:Close Holes]
+	]
+]
+
+
+//Remove small disconnected fragments via zmeshmend_core.exe.
+//CGAL connected_components + remove_connected_components, controlled by
+//gMinFrac / gMinFaces sliders (mirrors ZMeshMend.py union-find logic).
+[RoutineDef, RemoveFragments,
+	[VarSet,gRemoveFrag,1]
+	[RoutineCall, RunCGAL]
+]
+
+//Smooth all open boundary edge loops via Chaikin + Laplacian.
+//Writes smoothBorder=1 config so core.exe runs in smooth-only mode.
+[RoutineDef, RunSmooth,
+	[RoutineCall, CheckSystem]
+	[RoutineCall, ResolvePaths]
+	[If,[FileExists,exePath],,
+		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[FileNameSetNext, expPath]
+	[IPress, Tool:Export]
+
+	[If,[FileExists,expPath],,
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[If,[FileExists,impPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
+	]
+
+	[RoutineCall, SaveSmoothConfig]
+
+	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+
+	[Note, [StrMerge,"Smooth Border is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
+
+	[If,[FileExists,impPath],
+		[FileNameSetNext, impPath]
+		[IPress, Tool:Import]
+		[Note, "Smooth Open Edge complete (PolyGroups preserved).", , 2]
+	,
+		[Note,[StrMerge,"Smooth output not found at:",nl,impPath],,3,4737096,,500]
+	]
+
+	[RoutineCall, SaveConfig]
+]
+
+[RoutineDef, SaveRelaxConfig,
+	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration (Relax)",nl,"# Auto-generated for relax operation.",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxWireframe=1",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
+
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	[If,[MemGetSize,ZMM_CfgMem],
+		[MemDelete,ZMM_CfgMem]
+	]
+	[MemCreate,ZMM_CfgMem,4096,0]
+	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
+	[MemDelete,ZMM_CfgMem]
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
+]
+
+[RoutineDef, RunRelax,
+	[RoutineCall, CheckSystem]
+	[RoutineCall, ResolvePaths]
+	[If,[FileExists,exePath],,
+		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[FileNameSetNext, expPath]
+	[IPress, Tool:Export]
+
+	[If,[FileExists,expPath],,
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[If,[FileExists,impPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
+	]
+
+	[RoutineCall, SaveRelaxConfig]
+
+	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+
+	[Note, [StrMerge,"Relax Wireframe is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
+
+	[If,[FileExists,impPath],
+		[FileNameSetNext, impPath]
+		[IPress, Tool:Import]
+		[Note, "Relax Wireframe complete (PolyGroups preserved).", , 2]
+	,
+		[Note,[StrMerge,"Relax output not found at:",nl,impPath],,3,4737096,,500]
+	]
+
+	[RoutineCall, SaveConfig]
+]
+
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//~~~INTERFACE
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[ISubPalette,"ZPlugin:ZMeshMend"]
+
+
+//~~~Close All Holes (built-in only, no CGAL)~~~
+[IButton,"ZPlugin:ZMeshMend:Close All Holes","Close all open holes using ZBrush built-in algorithm.",
+	[RoutineCall, CheckEdit]
+	[IPress, Tool:Geometry:Modify Topology:Close Holes]
+	[Note,"Close All Holes complete!",,2]
+,,1]//end button
+
+
+//~~~MendHoles + PolyGroup (CGAL via core exe, GoZ output)~~~
+[IButton,"ZPlugin:ZMeshMend:MendHoles + PolyGroup","CGAL curvature-aware hole filling. Fill faces tagged with new PolyGroup.",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RunCGAL]
+	[Note,[StrMerge,"MendHoles + PolyGroup complete!",nl,nl,"Fill faces are tagged in a new PolyGroup.",nl,"Tip: Ctrl+Shift+Click a PolyGroup to mask it."],,3]
+,,1]//end button
+
+
+//~~~Mask-Based Cleanup (sharpen+grow mask, delete, then CGAL fill)~~~
+[IButton,"ZPlugin:ZMeshMend:Mask-Based Cleanup","Mask area to DELETE. Sharpen, grow, invert-delete, CGAL fill, group.",
+	[RoutineCall, CheckEdit]
+	[Loop, gPasses,
+		[IPress, Tool:Masking:SharpenMask]
+	]
+	[Loop, gRings,
+		[IPress, Tool:Masking:GrowMask]
+	]
+	[IPress, Tool:Masking:Inverse]
+	[IPress, Tool:Visibility:HidePt]
+	[IPress, Tool:Geometry:Modify Topology:Del Hidden]
+	[IPress, Tool:Visibility:ShowPt]
+	[RoutineCall, RunCGAL]
+	//Fragment removal is now done inside zmeshmend_core.exe via --min-frac/--min-faces.
+	//We no longer call ZBrush DelLoose here; it would only be a no-op duplicate.
+	[Note,"Mask-Based Cleanup complete!",,3]
+,,1]//end button
+
+
+//~~~Remove Small Fragments (CGAL connected_components, no DelLoose)~~~
+[IButton,"ZPlugin:ZMeshMend:Remove Small Fragments","Remove small disconnected fragments via CGAL (uses Min Fraction / Min Faces).",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RemoveFragments]
+	[Note,"Remove Small Fragments complete!",,2]
+,,1]//end button
+
+
+//~~~Smooth Open Edge (CGAL Chaikin + Laplacian, topology-preserving)~~~
+[IButton,"ZPlugin:ZMeshMend:Smooth Open Edge","Chaikin smooth open border loops; topology & PolyGroups preserved.",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RunSmooth]
+	[Note,"Smooth Open Edge complete!",,2]
+,,1]//end button
+
+[IButton,"ZPlugin:ZMeshMend:Relax Wireframe","CGAL smooth_shape tangent relax. Preserves volume, boundary vertices fixed.",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RunRelax]
+	[Note,"Relax Wireframe complete!",,2]
+,,1]//end button
+
+
+//~~~About~~~
+[IButton,"ZPlugin:ZMeshMend:About ZMeshMend","Show plugin information and version.",
+	[Note,[StrMerge,"ZMeshMend ZScript v1.2.0",nl,nl,
+		"1. CGAL curvature-aware fill + PolyGroup",nl,
+		"2. Mask-driven cleanup",nl,
+		"3. Small fragment removal",nl,
+		"4. Smooth open edges",nl,
+		"5. Relax wireframe (CGAL smooth_shape)",nl,
+		"6. ZBrush Close Holes fallback"],,4737096,,500]
+,,1]//end button
+
+
+//~~~Settings sub-palette~~~
+[ISubPalette,"ZPlugin:ZMeshMend:Settings"]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Mask Sharpen Passes",1,1,0,5,
+	"Sharpen mask passes before grow (0-5).",
+	[VarSet,gPasses,[IGet,"ZPlugin:ZMeshMend:Settings:Mask Sharpen Passes"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+[ISlider,"ZPlugin:ZMeshMend:Settings:Mask Grow Rings",1,1,0,5,
+	"Rings to grow mask before deletion (0-5).",
+	[VarSet,gRings,[IGet,"ZPlugin:ZMeshMend:Settings:Mask Grow Rings"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Remove Small Fragments",1,1,0,1,
+	"Pass --min-frac/--min-faces to CGAL core (0=off, 1=on).",
+	[VarSet,gRemoveFrag,[IGet,"ZPlugin:ZMeshMend:Settings:Remove Small Fragments"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Fragment Min Fraction",0.01,0.001,0,0.5,
+	"Min fraction of total faces for a fragment to be kept.",
+	[VarSet,gMinFrac,[IGet,"ZPlugin:ZMeshMend:Settings:Fragment Min Fraction"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Fragment Min Faces",50,1,1,500,
+	"Minimum absolute face count for a fragment to be kept.",
+	[VarSet,gMinFaces,[IGet,"ZPlugin:ZMeshMend:Settings:Fragment Min Faces"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Smooth Iterations",2,1,1,20,
+	"Number of Chaikin smooth passes on border (1-20).",
+	[VarSet,gSmoothIter,[IGet,"ZPlugin:ZMeshMend:Settings:Smooth Iterations"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Smooth Rings",3,1,1,20,
+	"Number of rings to smooth inward from border (1-20).",
+	[VarSet,gSmoothRings,[IGet,"ZPlugin:ZMeshMend:Settings:Smooth Rings"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Relax Iterations",3,1,1,20,
+	"Global wireframe relax iterations (1-20).",
+	[VarSet,gRelaxIter,[IGet,"ZPlugin:ZMeshMend:Settings:Relax Iterations"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]

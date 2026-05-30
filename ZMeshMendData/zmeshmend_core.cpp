@@ -369,8 +369,8 @@ relax_wireframe(Mesh& mesh, int iterations)
 
     CGAL::Polygon_mesh_processing::smooth_shape(
         mesh,
+        0.75,
         CGAL::parameters::number_of_iterations(iterations)
-                         .time_step(0.75)
                          .vertex_is_constrained_map(constrained));
 
     std::cout << "Relax: done." << std::endl;
