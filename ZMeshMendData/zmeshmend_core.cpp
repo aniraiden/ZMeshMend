@@ -886,7 +886,7 @@ int main(int argc, char* argv[])
         }
         std::cout << "OBJ Input: " << mesh.number_of_vertices() << " vertices, "
                   << mesh.number_of_faces() << " faces" << std::endl;
-        if (!opt_smooth_only && !CGAL::is_triangle_mesh(mesh))
+        if (!opt_smooth_only && !opt_relax_wireframe && !CGAL::is_triangle_mesh(mesh))
         {
             std::cout << "Triangulating non-triangle faces..." << std::endl;
             PMP::triangulate_faces(mesh);

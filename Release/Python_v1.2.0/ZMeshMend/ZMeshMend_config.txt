@@ -1,29 +1,30 @@
-# ZMeshMend Configuration
-# Edit values as needed.
+# ZMeshMend 配置文件
+# 按需修改参数。
 
-# Remove small disconnected fragments (1=yes, 0=no)
+# 移除小型分离碎片（1=是, 0=否）
 removeSmallFragments=1
 
-# Minimum fraction of total faces to keep a fragment
+# 保留碎片所需的最小面数占比
 fragmentMinFraction=0.01
 
-# Minimum absolute face count to keep a fragment
+# 保留碎片所需的最小绝对面数
 fragmentMinFaces=50
 
-# Number of rings to grow mask before deletion
+# 删除前扩展遮罩的环数
 maskGrowRings=1
 
-# Number of mask sharpen passes before grow
+# 扩展前锐化遮罩的遍数
 maskSharpenPasses=1
 
-# Smooth border mode (1=smooth only, 0=normal fill)
+# 平滑边界模式（1=仅平滑, 0=正常补洞）
 smoothBorder=0
 
-# Number of boundary smooth Chaikin iterations (1-20)
+# 边界平滑迭代次数（1-20）
 smoothIterations=2
 
-# Number of rings to smooth inward from border (1-20)
+# 边界平滑向内扩展圈数（1-20）
 smoothRings=3
 
-# Number of global wireframe relax iterations (1-20)
-relaxIterations=3
+# 全局布线放松迭代次数（1-20）
+relaxIterations=5
+
