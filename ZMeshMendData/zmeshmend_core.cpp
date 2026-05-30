@@ -340,7 +340,7 @@ smooth_open_borders(Mesh& mesh, int iterations, int num_rings)
 }
 
 static void
-relax_wireframe(Mesh& mesh, int iterations)
+relax_wireframe(Mesh& mesh, int iterations, double factor)
 {
     if (iterations <= 0) return;
 
@@ -359,7 +359,7 @@ relax_wireframe(Mesh& mesh, int iterations)
     int boundary_count = (int)boundary_set.size();
     std::cout << "Relax: " << boundary_count << " boundary vertices constrained, "
               << (total_vtx - boundary_count) << " interior vertices free, "
-              << "iterations=" << iterations << std::endl;
+              << "iterations=" << iterations << " factor=" << factor << std::endl;
 
     std::vector<Point> new_positions(total_vtx);
     std::vector<Vector> normals(total_vtx, Vector(0, 0, 0));
@@ -408,7 +408,7 @@ relax_wireframe(Mesh& mesh, int iterations)
 
             const Vector& n = normals[(size_t)v];
             double dot = disp * n;
-            Vector tangent_disp = disp - n * dot;
+            Vector tangent_disp = (disp - n * dot) * factor;
 
             Point moved = mesh.point(v) + tangent_disp;
             new_positions[(size_t)v] = moved;
@@ -748,6 +748,7 @@ int main(int argc, char* argv[])
     bool   opt_smooth_only       = false;
     bool   opt_relax_wireframe   = false;
     int    opt_relax_iterations  = 3;
+    double opt_relax_factor      = 0.3;
 
     if (argc < 3)
     {
@@ -782,7 +783,7 @@ int main(int argc, char* argv[])
             char line[256];
             while (fgets(line, sizeof(line), cf))
             {
-                int vi = 0; float vf = 0.0f;
+                int vi = 0; float vf = 0.0f; double vd = 0.0;
                 if (sscanf(line, "maskSharpenPasses=%d", &vi) == 1)      { /*跳过*/ }
                 else if (sscanf(line, "maskGrowRings=%d", &vi) == 1)      { /*跳过*/ }
                 else if (sscanf(line, "removeSmallFragments=%d", &vi) == 1)
@@ -802,6 +803,7 @@ int main(int argc, char* argv[])
                     if (vi) { opt_relax_wireframe = true; }
                 }
                 else if (sscanf(line, "relaxIterations=%d", &vi) == 1)    { opt_relax_iterations = vi; }
+                else if (sscanf(line, "relaxFactor=%lf", &vd) == 1)      { opt_relax_factor = vd; }
             }
             fclose(cf);
 
@@ -857,6 +859,10 @@ int main(int argc, char* argv[])
         else if (a == "--relax-iterations" && i + 1 < argc)
         {
             opt_relax_iterations = std::atoi(argv[++i]);
+        }
+        else if (a == "--relax-factor" && i + 1 < argc)
+        {
+            opt_relax_factor = std::atof(argv[++i]);
         }
         else if (!a.empty() && a[0] != '-')
         {
@@ -1003,7 +1009,7 @@ int main(int argc, char* argv[])
 
     if (opt_relax_wireframe)
     {
-        relax_wireframe(mesh, opt_relax_iterations);
+        relax_wireframe(mesh, opt_relax_iterations, opt_relax_factor);
 
         std::ofstream out(out_path);
         if (!out)

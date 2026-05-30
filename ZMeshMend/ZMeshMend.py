@@ -48,6 +48,7 @@ CONFIG = {
     "smoothIterations": 2,
     "smoothRings": 3,
     "relaxIterations": 3,
+    "relaxFactor": 0.3,
 }
 
 _config_comment_map = {
@@ -60,6 +61,7 @@ _config_comment_map = {
     "smoothIterations": "边界平滑迭代次数（1-20）",
     "smoothRings": "边界平滑向内扩展圈数（1-20）",
     "relaxIterations": "全局布线放松迭代次数（1-20）",
+    "relaxFactor": "全局布线放松阻尼因子（0.1-1.0，越小越保守）",
 }
 
 
@@ -194,12 +196,14 @@ def _call_cgal_relax_wireframe(input_obj, output_obj):
     返回 True 表示成功。
     """
     iterations = CONFIG["relaxIterations"]
+    factor = CONFIG["relaxFactor"]
     args = [
         _CGAL_EXE_PATH,
         input_obj,
         output_obj,
         "--relax-wireframe",
         "--relax-iterations", str(iterations),
+        "--relax-factor", str(factor),
     ]
 
     try:
@@ -1869,6 +1873,9 @@ def _on_config_change(sender="", value=0.0):
     elif name == "Relax Iterations":
         CONFIG["relaxIterations"] = int(value)
         save_config()
+    elif name == "Relax Factor":
+        CONFIG["relaxFactor"] = round(float(value), 2)
+        save_config()
 
 
 def _on_info_click(sender=""):
@@ -2026,6 +2033,17 @@ def build_ui():
         1.0,
         20.0,
         "全局布线放松迭代次数（1-20）。",
+        _on_config_change,
+        width=1.0,
+    )
+
+    zbc.add_slider(
+        _ui_path("Settings:Relax Factor"),
+        float(CONFIG["relaxFactor"]),
+        0.05,
+        0.1,
+        1.0,
+        "全局布线放松阻尼（0.1-1.0）。越小越保守，越大越激进。",
         _on_config_change,
         width=1.0,
     )

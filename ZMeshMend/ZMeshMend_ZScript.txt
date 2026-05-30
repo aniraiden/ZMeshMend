@@ -40,6 +40,7 @@
 [VarDef,gSmoothIter,2]//smoothIterations (1-20)
 [VarDef,gSmoothRings,3]//smoothRings (1-20)
 [VarDef,gRelaxIter,3]//relaxIterations (1-20)
+[VarDef,gRelaxFactor,0.3]//relaxFactor (0.1-1.0)
 
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -154,6 +155,9 @@
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations (1-20)",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxFactor=",gRelaxFactor,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax damping factor (0.1-1.0)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxFactor=",gRelaxFactor,nl,nl]]
 
 	//Delete temp first
 	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
@@ -324,6 +328,8 @@
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxWireframe=1",nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax damping factor",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxFactor=",gRelaxFactor,nl]]
 
 	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
 	[If,[FileExists,tmpPath],
@@ -516,6 +522,13 @@
 [ISlider,"ZPlugin:ZMeshMend:Settings:Relax Iterations",3,1,1,20,
 	"Global wireframe relax iterations (1-20).",
 	[VarSet,gRelaxIter,[IGet,"ZPlugin:ZMeshMend:Settings:Relax Iterations"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Relax Factor",0.3,0.05,0.1,1.0,
+	"Relax damping factor (0.1-1.0). Lower = more conservative.",
+	[VarSet,gRelaxFactor,[IGet,"ZPlugin:ZMeshMend:Settings:Relax Factor"]]
 	[RoutineCall, ResolvePaths]
 	[RoutineCall, SaveConfig]
 ,,1]
