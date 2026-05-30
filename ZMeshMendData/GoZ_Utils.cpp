@@ -253,6 +253,7 @@ GoZ_Utils::readPref(const char* pFileName, const char* pPrefName, char* pOutPref
 
   fseek(file, 0, SEEK_END);
   int fileSize = ftell(file);
+  if (fileSize <= 0) { fclose(file); return false; }
   bool found = false;
   if (fileSize > 0)
   {
@@ -307,6 +308,7 @@ GoZ_Utils::writePref(const char* pFileName, const char* pPrefName, const char* p
 
   fseek(file, 0, SEEK_END);
   int fileSize = ftell(file);
+  if (fileSize <= 0) { fclose(file); return false; }
   if (fileSize > 0)
   {
     char str[512];

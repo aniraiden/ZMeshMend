@@ -75,13 +75,13 @@ GoZ_Mesh::readMesh(const char* fileName)
       case GoZ_TAG_MESH:
         {
         count = blocHeader.size-sizeof(GoZ_Header);
-        if (count) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_name.assign(tmp.data());}
+        if (count > 0) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_name.assign(tmp.data());}
         }
         break;
       case GoZ_TAG_MATERIAL:
         {
         count = blocHeader.size-sizeof(GoZ_Header);
-        if (count) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_material.assign(tmp.data());}
+        if (count > 0) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_material.assign(tmp.data());}
         }
         break;
       case GoZ_TAG_FLAGS:
@@ -127,20 +127,20 @@ GoZ_Mesh::readMesh(const char* fileName)
       case GoZ_TAG_TEXTURE_MAP_PATH:
         {
         count = blocHeader.size-sizeof(GoZ_Header);
-        if (count) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_diffuseMap.assign(tmp.data());}
+        if (count > 0) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_diffuseMap.assign(tmp.data());}
         }
         break;
       case GoZ_TAG_NORMAL_MAP_PATH:
         {
         count = blocHeader.size-sizeof(GoZ_Header);
-        if (count) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_normalMap.assign(tmp.data());}
+        if (count > 0) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_normalMap.assign(tmp.data());}
         }
         break;
       case GoZ_TAG_DISPLACEMENT_MAP_PATH:
         {
         m_displacementScale = blocHeader.modifier;
         count = blocHeader.size-sizeof(GoZ_Header);
-        if (count) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_displacementMap.assign(tmp.data());}
+        if (count > 0) {std::vector<char> tmp(count); noErr = GoZ_Utils::readGoZBlocData(file, &blocHeader, tmp.data()); m_displacementMap.assign(tmp.data());}
         }
         break;
       case GoZ_TAG_CREASE_LIST:

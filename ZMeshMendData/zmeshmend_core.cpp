@@ -358,7 +358,9 @@ relax_wireframe(Mesh& mesh, int iterations, double factor,
 
     std::cout << "Relax: building reference surface AABB tree (Maya oaRelaxVerts style)..." << std::endl;
 
-    Mesh ref_mesh = mesh;
+    // 使用 unique_ptr 避免将整个 CGAL Surface_mesh 拷贝到栈上（大模型可能栈溢出）。
+    auto ref_mesh_ptr = std::make_unique<Mesh>(mesh);
+    Mesh& ref_mesh = *ref_mesh_ptr;
     if (!CGAL::is_triangle_mesh(ref_mesh))
     {
         PMP::triangulate_faces(ref_mesh);
@@ -496,6 +498,12 @@ static bool load_goz_to_cgal(GoZ_Mesh& goz, Mesh& mesh,
     goz_face_to_cgal_offset.assign(goz.m_faceCount + 1, 0);
 
     int cgal_face_idx = 0;
+    // 防御：本函数按 FACE4_LIST 每面 4 个索引处理，确保数组大小足够。
+    if ((int)goz.m_vertexIndices.size() < goz.m_faceCount * 4)
+    {
+        std::cerr << "ERROR: GoZ vertex index array too small for FACE4 format" << std::endl;
+        return false;
+    }
     for (int fi = 0; fi < goz.m_faceCount; ++fi)
     {
         const int* idx = goz.m_vertexIndices.data() + fi * 4;
@@ -762,9 +770,10 @@ static void write_fill_only_goz(GoZ_Mesh& full_goz, const Mesh& mesh,
         for (std::size_t i = 0; i < fill_faces.size(); ++i)
         {
             int src_fi = fill_faces[i];
-            fill_goz.m_vertexIndices[i * 3 + 0] = full_goz.m_vertexIndices[src_fi * 3 + 0];
-            fill_goz.m_vertexIndices[i * 3 + 1] = full_goz.m_vertexIndices[src_fi * 3 + 1];
-            fill_goz.m_vertexIndices[i * 3 + 2] = full_goz.m_vertexIndices[src_fi * 3 + 2];
+            // full_goz 为 build_output_goz 输出，每面 4 个索引（FACE4）。取前 3 个。
+            fill_goz.m_vertexIndices[i * 3 + 0] = full_goz.m_vertexIndices[src_fi * 4 + 0];
+            fill_goz.m_vertexIndices[i * 3 + 1] = full_goz.m_vertexIndices[src_fi * 4 + 1];
+            fill_goz.m_vertexIndices[i * 3 + 2] = full_goz.m_vertexIndices[src_fi * 4 + 2];
         }
     }
 
