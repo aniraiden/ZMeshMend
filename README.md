@@ -4,7 +4,7 @@
 
 [中文](#zmeshmend) | [English](#zmeshmend-1)
 
-ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 CGAL 智能曲率感知填充、碎片移除、遮罩驱动的模型清理和平滑开放边缘。
+ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 CGAL 智能曲率感知填充、碎片移除、遮罩驱动的模型清理、平滑开放边缘和全局布线放松。
 
 提供 **Python** 和 **ZScript** 两种版本，互不依赖。
 
@@ -35,6 +35,7 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 | **Mask-Based Cleanup** | 遮罩 → 删除 → 智能填充，全自动流程 |
 | **Remove Small Fragments** | CGAL 连通性分析自动清理孤立碎片 |
 | **Smooth Open Edge** | 边界 Chaikin + Laplacian 多圈平滑，法线投影保持体积 |
+| **Relax Wireframe** | Laplacian 平滑 + 投影回原表面，边界顶点保护，保持体积和细节 |
 
 
 ---
@@ -87,8 +88,10 @@ ZBrush 网格孔洞自动修复插件。一键闭合所有开放孔洞，支持 
 | `removeSmallFragments` | 1 | 是否移除小碎片 |
 | `fragmentMinFraction` | 0.01 | 碎片保留的最小面数占比 |
 | `fragmentMinFaces` | 50 | 碎片保留的绝对最小面数 |
-| `smoothIterations` | 2 | 平滑边缘迭代次数（1-20） |
-| `smoothRings` | 3 | 平滑边缘向内扩展圈数（1-20） |
+| `smoothIterations` | 2 | 平滑迭代次数 (1-20) |
+| `smoothRings` | 3 | 平滑向内扩展圈数 (1-20) |
+| `relaxIterations` | 3 | 全局放松迭代次数 (1-20) |
+| `relaxFactor` | 1.0 | 放松阻尼系数 (0.1-1.0) |
 
 ZScript 版可直接在面板 Settings 子面板中调整。
 
@@ -176,7 +179,7 @@ ZMeshMend/
 
 [中文](#zmeshmend) | [English](#zmeshmend-1)
 
-A ZBrush plugin for automatic mesh hole repair. Close all open holes with one click, featuring CGAL intelligent curvature-aware filling, fragment removal, mask-driven model cleanup, and smooth open edge processing.
+A ZBrush plugin for automatic mesh hole repair. Close all open holes with one click, featuring CGAL intelligent curvature-aware filling, fragment removal, mask-driven model cleanup, smooth open edge processing, and global wireframe relaxation.
 
 Available in both **Python** and **ZScript** versions, independent of each other.
 
@@ -206,6 +209,7 @@ Visit [GitHub Releases](https://github.com/aniraiden/ZMeshMend/releases) to down
 | **Mask-Based Cleanup** | Mask → Delete → Smart Fill, fully automated workflow |
 | **Remove Small Fragments** | CGAL connectivity analysis for automatic isolated fragment cleanup |
 | **Smooth Open Edge** | Boundary Chaikin + Laplacian multi-ring smooth with normal projection |
+| **Relax Wireframe** | Laplacian smooth + snap to reference surface, boundary vertex protection |
 
 ---
 
