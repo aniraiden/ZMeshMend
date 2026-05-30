@@ -13,8 +13,6 @@
 [VarDef,isMac,0]//do we have a Mac or PC
 [VarDef,Zvers,0]//ZBrush version
 [VarDef,dllPath,""]//ZFileUtils plugin DLL path
-[VarDef,tmpPath,""]//temporary file path used by SaveConfig routines
-[VarDef,sdivMax,0]//max SubDiv level
 [VarDef,dllVersion,0]//plugin DLL version
 [VarDef,err,0]//standard error
 [VarDef,lBytes,0]//bytes written by MemWriteString
@@ -181,9 +179,6 @@
 		[MemCreate,ZMM_CfgMem,256,0]
 		[MemWriteString,ZMM_CfgMem,configPath,0]
 		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
-		[If, err != 0,
-			[Note, "Failed to save configuration. Check disk permissions.", , 2]
-		]
 		[MemDelete,ZMM_CfgMem]
 	]
 ]
@@ -215,9 +210,6 @@
 		[MemCreate,ZMM_CfgMem,256,0]
 		[MemWriteString,ZMM_CfgMem,configPath,0]
 		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
-		[If, err != 0,
-			[Note, "Failed to save smooth configuration.", , 2]
-		]
 		[MemDelete,ZMM_CfgMem]
 	]
 ]
@@ -237,7 +229,7 @@
 [RoutineDef, CheckNoSubdiv,
 	[VarSet,sdivMax,[IGetMax,Tool:Geometry:SDiv]]
 	[If, sdivMax > 1,
-		[Note, "Cannot run on subdivided mesh. Please go to lowest SubDiv level (SDiv=1) and Tool > Geometry > Del Higher first.", , 2]
+		[Note, "Cannot run on subdivided mesh. Please go to lowest SubDiv level (SDiv=1) and Tool > Geometry > Del Higher first.", , 4]
 		[Exit]
 	]
 ]
@@ -261,7 +253,7 @@
 
 	//1b. verify export succeeded
 	[If,[FileExists,expPath],,
-		[Note,[StrMerge,"Export failed. GoZ not created at:",nl,expPath],,3,4737096,,500]
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
 		[Exit]
 	]
 
@@ -274,11 +266,7 @@
 	[RoutineCall, SaveConfig]
 
 	//4. launch core.exe via ZFileUtils64.dll LaunchAppWithFile.
-	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
-	[If, err != 0,
-		[Note, [StrMerge,"Failed to launch zmeshmend_core.exe. Error code: ",err], , 2]
-		[Exit]
-	]
+[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
 
 	//5. wait for user to confirm completion
 	[Note, [StrMerge,"CGAL is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
@@ -323,9 +311,10 @@
 	[IPress, Tool:Export]
 
 	[If,[FileExists,expPath],,
-		[Note,[StrMerge,"Export failed. GoZ not created at:",nl,expPath],,3,4737096,,500]
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
 		[Exit]
 	]
+
 	[If,[FileExists,impPath],
 		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
 	]
@@ -333,10 +322,6 @@
 	[RoutineCall, SaveSmoothConfig]
 
 	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
-	[If, err != 0,
-		[Note, [StrMerge,"Failed to launch zmeshmend_core.exe. Error code: ",err], , 2]
-		[Exit]
-	]
 
 	[Note, [StrMerge,"Smooth Border is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
 
@@ -377,9 +362,6 @@
 		[MemCreate,ZMM_CfgMem,256,0]
 		[MemWriteString,ZMM_CfgMem,configPath,0]
 		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
-		[If, err != 0,
-			[Note, "Failed to save relax configuration.", , 2]
-		]
 		[MemDelete,ZMM_CfgMem]
 	]
 ]
@@ -398,7 +380,7 @@
 	[IPress, Tool:Export]
 
 	[If,[FileExists,expPath],,
-		[Note,[StrMerge,"Export failed. GoZ not created at:",nl,expPath],,3,4737096,,500]
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
 		[Exit]
 	]
 
@@ -409,10 +391,6 @@
 	[RoutineCall, SaveRelaxConfig]
 
 	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
-	[If, err != 0,
-		[Note, [StrMerge,"Failed to launch zmeshmend_core.exe. Error code: ",err], , 2]
-		[Exit]
-	]
 
 	[Note, [StrMerge,"Relax Wireframe is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
 

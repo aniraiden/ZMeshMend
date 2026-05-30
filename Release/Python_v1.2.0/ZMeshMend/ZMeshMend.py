@@ -13,7 +13,7 @@
 """
 
 __author__ = "ZMeshMend Rebuild"
-__version__ = "1.2.0"
+__version__ = "1.1.0"
 
 import os
 import sys
@@ -187,7 +187,7 @@ def _call_cgal_fill(input_obj, output_goz, fill_goz=None, debug_obj=None):
         return False, -1
     except Exception as e:
         _log(f"  [CGAL] 错误：{e}")
-        return False, -1
+        return False
 
 
 def _call_cgal_relax_wireframe(input_obj, output_obj):
@@ -250,7 +250,7 @@ def _call_cgal_relax_wireframe(input_obj, output_obj):
         return False
     except Exception as e:
         _log(f"  [CGAL] 错误：{e}")
-        return False
+        return False, -1
 
 
 def _call_cgal_smooth_border(input_obj, output_obj):
@@ -454,12 +454,80 @@ def _auto_groups():
         _log("警告：无法自动分组")
 
 
-def _show_all():
-    """显示所有几何体——删除隐藏面后必须显式恢复可见性。"""
+def _group_masked(clear_mask=True):
+    """从遮罩区域创建 PolyGroup。
+
+    ZBrush UI 显示为 'Polygroups'（复数），但 IPress 路径在不同版本/语言下可能是
+    单数 'PolyGroup' 或复数 'Polygroups'，且 'Group Masked' 与 'Group Masked Clear'
+    是两个独立按钮。中文版 ZBrush 的 IPress 路径可能采用中文菜单名。
+    这里依次尝试多个候选路径，命中第一个就停。
+
+    返回实际成功调用的路径字符串；全部失败返回 None。
+    """
+    if clear_mask:
+        candidates = [
+            "Tool:PolyGroup:Group Masked Clear",
+            "Tool:Polygroups:Group Masked Clear",
+            "Tool:PolyGroups:Group Masked Clear",
+            "Tool:Polygroup:Group Masked Clear",
+            "Tool:多边形组:遮罩分组并清除遮罩",
+            "工具:多边形组:遮罩分组并清除遮罩",
+            "Tool:多边形组:遮罩分组",
+        ]
+    else:
+        candidates = [
+            "Tool:PolyGroup:Group Masked",
+            "Tool:Polygroups:Group Masked",
+            "Tool:PolyGroups:Group Masked",
+            "Tool:Polygroup:Group Masked",
+            "Tool:多边形组:遮罩分组",
+            "工具:多边形组:遮罩分组",
+        ]
+
+    for path in candidates:
+        try:
+            zbc.press(path)
+            zbc.update()
+            _log(f"  [DEBUG] 已调用 polygroup 路径：'{path}'")
+            return path
+        except Exception as e:
+            _log(f"  [DEBUG] 路径失败：'{path}' -> {e}")
+            continue
+    _log("警告：所有 Group Masked 路径都失败")
+    return None
+
+
+def _collect_obj_groups(filepath):
+    """读取 OBJ 文件，返回按出现顺序去重的 polygroup 名列表。"""
+    groups = []
+    seen = set()
     try:
-        zbc.press("Tool:Visibility:ShowPt")
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.startswith("g "):
+                    name = line[2:].strip()
+                    if name and name not in seen:
+                        seen.add(name)
+                        groups.append(name)
+    except Exception as e:
+        _log(f"警告：解析 OBJ 组失败：{e}")
+    return groups
+
+
+def _mask_all():
+    """遮罩整个网格"""
+    try:
+        zbc.press("Tool:Masking:MaskAll")
     except Exception:
-        _log("警告：无法显示全部")
+        _log("警告：无法遮罩全部")
+
+
+def _clear_mask():
+    """清除当前遮罩"""
+    try:
+        zbc.press("Tool:Masking:Clear")
+    except Exception:
+        _log("警告：无法清除遮罩")
 
 
 def _invert_mask():
@@ -480,6 +548,50 @@ def _invert_mask():
             continue
     _log("  警告：无法反转遮罩（无已知按钮路径）")
     return False
+
+
+def _invert_visibility():
+    """反转可见性。尝试多个已知按钮路径。"""
+    candidates = [
+        "Tool:Visibility:Invert",
+        "Tool:Visibility:Inverse",
+        "Tool:Visibility:Invert Visibility",
+    ]
+    for path in candidates:
+        try:
+            if hasattr(zbc, "exists") and not zbc.exists(path):
+                continue
+            zbc.press(path)
+            _log(f"  [vis] 通过 '{path}' 反转可见性")
+            return True
+        except Exception:
+            continue
+    _log("  警告：无法反转可见性")
+    return False
+
+
+def _show_all():
+    """显示所有几何体"""
+    try:
+        zbc.press("Tool:Visibility:ShowPt")
+    except Exception:
+        _log("警告：无法显示全部")
+
+
+def _mask_by_polygroups():
+    """从 PolyGroup 创建遮罩"""
+    try:
+        zbc.press("Tool:Masking:MaskByPolyGroups")
+    except Exception:
+        _log("警告：无法按 PolyGroup 遮罩")
+
+
+def _undo():
+    """创建撤销点"""
+    try:
+        zbc.press("Edit:Undo")
+    except Exception:
+        pass
 
 
 def _export_obj(filepath):
@@ -504,6 +616,86 @@ def _import_obj(filepath):
     except Exception as e:
         _log(f"警告：_import_obj 失败：{e}")
         return False
+
+
+def _import_goz(filepath):
+    """导入 GoZ 文件作为当前工具。原生支持 PolyGroup 和遮罩。
+
+    成功导入并加载网格时返回 True。
+    GoZ 导入失败时，回退到同名的 .obj 文件导入。
+    """
+    try:
+        face_before = _get_face_count()
+        zbc.set_next_filename(filepath)
+        zbc.press("Tool:Import")
+        zbc.update()
+        face_after = _get_face_count()
+        if face_after != face_before or face_before == 0:
+            return True
+        _log("  警告：通过 Tool:Import 导入 GoZ 未改变网格，尝试备选方案……")
+        try:
+            zbc.execute_zscript('[IPress,Tool:GoZ]')
+            zbc.update()
+            return True
+        except Exception:
+            pass
+        return False
+    except Exception as e:
+        _log(f"  警告：GoZ 导入失败：{e}")
+        return False
+
+
+def _import_obj_as_subtool(filepath):
+    """直接导入 OBJ 文件作为当前工具的副工具。
+    （预留功能，当前未使用。）
+
+    使用 ZScript ISubToolAddMesh 将网格文件添加为新副工具，
+    不会替换当前工具。
+    后续合并副工具时，ZBrush 会分配不同的 PolyGroup。
+
+    如 ZScript 不可用，尝试 Tool:Subtool:Insert。
+    成功添加副工具时返回 True，否则返回 False。
+    """
+    try:
+        script = '[ISubToolAddMesh, "{0}"]'.format(filepath.replace("\\", "/"))
+        try:
+            zbc.execute_zscript(script)
+        except AttributeError:
+            zbc.set_next_filename(filepath)
+            zbc.press("Tool:Subtool:Insert")
+        zbc.update()
+        return True
+    except Exception as e:
+        _log(f"  警告：副工具导入失败：{e}，回退到 OBJ 导入")
+        return False
+
+
+def _merge_visible():
+    """合并所有可见副工具为一个。不同副工具来源在合并结果中会获得不同的 PolyGroup。"""
+    try:
+        zbc.press("Tool:Subtool:Merge Visible")
+    except Exception:
+        try:
+            zbc.press("Tool:Subtool:MergeDown")
+        except Exception:
+            _log("  警告：无法合并副工具")
+
+
+def _weld_points():
+    """焊接重合顶点（合并后用于融合补丁边界）。"""
+    candidates = [
+        "Tool:Geometry:Modify Topology:Weld Points",
+        "Tool:Geometry:WeldPoints",
+        "Tool:Geometry:Weld Points",
+    ]
+    for path in candidates:
+        try:
+            zbc.press(path)
+            return True
+        except Exception:
+            continue
+    _log("  警告：找不到焊接点按钮")
+    return False
 
 
 def _read_obj_full(filepath):
@@ -834,6 +1026,18 @@ def _v3_sub(a, b):
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 
 
+def _v3_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _v3_cross(a, b):
+    return (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+
+
 def _v3_len(v):
     return math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
 
@@ -1139,6 +1343,35 @@ def _fill_hole_smart(vertices, faces, loop, groups_list=None):
             groups_list.append("ZMeshMend_Fill")
 
     return new_vertices, new_faces, ["ZMeshMend_Fill"] * len(new_faces)
+
+
+def _process_holes_in_obj(filepath):
+    """处理 OBJ 文件：检测并用球体拟合填充孔洞"""
+    vertices, faces, groups = _read_obj_full(filepath)
+
+    boundary_edges = _find_boundary_edges(faces)
+    if not boundary_edges:
+        _log("  未发现开放边界 - 网格为水密的")
+        return False
+
+    loops = _build_boundary_loops(boundary_edges)
+    _log(f"  发现 {len(loops)} 个孔洞，共 {len(boundary_edges)} 条边界边")
+
+    total_new_faces = 0
+    for loop in loops:
+        if len(loop) < 3:
+            continue
+        new_verts, new_faces, new_grps = _fill_hole_smart(vertices, faces, loop, groups)
+        total_new_faces += len(new_faces)
+        if new_grps:
+            groups.extend(new_grps)
+
+    if total_new_faces > 0:
+        _write_obj(filepath, vertices, faces, groups)
+        _log(f"  在 {len(loops)} 个孔洞上填充了 {total_new_faces} 个新面")
+        return True
+
+    return False
 
 
 def do_close_all_holes(sender=""):
