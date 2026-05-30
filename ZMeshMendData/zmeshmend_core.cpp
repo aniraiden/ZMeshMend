@@ -32,7 +32,6 @@
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Polygon_mesh_processing/stitch_borders.h>
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
-#include <CGAL/Polygon_mesh_processing/smooth_shape.h>
 #include <CGAL/boost/graph/helpers.h>
 #include <CGAL/IO/polygon_soup_io.h>
 
@@ -347,33 +346,82 @@ relax_wireframe(Mesh& mesh, int iterations)
 
     std::cout << "Relax: collecting boundary vertices..." << std::endl;
 
-    Mesh::Property_map<Mesh::Vertex_index, bool> constrained =
-        mesh.add_property_map<Mesh::Vertex_index, bool>("v:constrained", false).first;
-
-    int boundary_count = 0;
+    std::set<Mesh::Vertex_index> boundary_set;
     for (auto h : mesh.halfedges())
     {
         if (CGAL::is_border(h, mesh))
         {
-            auto v = mesh.target(h);
-            if (!constrained[v])
-            {
-                constrained[v] = true;
-                ++boundary_count;
-            }
+            boundary_set.insert(mesh.target(h));
         }
     }
 
+    int total_vtx = (int)mesh.number_of_vertices();
+    int boundary_count = (int)boundary_set.size();
     std::cout << "Relax: " << boundary_count << " boundary vertices constrained, "
+              << (total_vtx - boundary_count) << " interior vertices free, "
               << "iterations=" << iterations << std::endl;
 
-    CGAL::Polygon_mesh_processing::smooth_shape(
-        mesh,
-        0.75,
-        CGAL::parameters::number_of_iterations(iterations)
-                         .vertex_is_constrained_map(constrained));
+    std::vector<Point> new_positions(total_vtx);
+    std::vector<Vector> normals(total_vtx, Vector(0, 0, 0));
 
-    std::cout << "Relax: done." << std::endl;
+    for (int it = 0; it < iterations; ++it)
+    {
+        for (auto v : mesh.vertices())
+        {
+            normals[(size_t)v] = vertex_normal(mesh, v);
+        }
+
+        for (auto v : mesh.vertices())
+        {
+            if (boundary_set.count(v))
+            {
+                new_positions[(size_t)v] = mesh.point(v);
+                continue;
+            }
+
+            Mesh::Halfedge_index h0 = mesh.halfedge(v);
+            if (h0 == Mesh::null_halfedge())
+            {
+                new_positions[(size_t)v] = mesh.point(v);
+                continue;
+            }
+
+            Vector laplacian(0, 0, 0);
+            int neighbor_count = 0;
+            Mesh::Halfedge_index h = h0;
+            do {
+                laplacian = laplacian + (mesh.point(mesh.target(h)) - CGAL::ORIGIN);
+                ++neighbor_count;
+                h = mesh.next(mesh.opposite(h));
+            } while (h != h0);
+
+            if (neighbor_count == 0)
+            {
+                new_positions[(size_t)v] = mesh.point(v);
+                continue;
+            }
+
+            laplacian = laplacian / (double)neighbor_count;
+            Point smoothed(laplacian.x(), laplacian.y(), laplacian.z());
+
+            Vector disp = smoothed - mesh.point(v);
+
+            const Vector& n = normals[(size_t)v];
+            double dot = disp * n;
+            Vector tangent_disp = disp - n * dot;
+
+            Point moved = mesh.point(v) + tangent_disp;
+            new_positions[(size_t)v] = moved;
+        }
+
+        for (auto v : mesh.vertices())
+        {
+            mesh.point(v) = new_positions[(size_t)v];
+        }
+    }
+
+    int moved_count = total_vtx - boundary_count;
+    std::cout << "Relax: " << moved_count << " interior vertices relaxed, done." << std::endl;
 }
 
 // ============================================================================
