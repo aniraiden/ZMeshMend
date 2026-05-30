@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # When using vcpkg, pass -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 find_package(CGAL REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(OpenMP)
 
 add_executable(zmeshmend_core
     zmeshmend_core.cpp
@@ -17,6 +18,9 @@ add_executable(zmeshmend_core
 )
 
 target_link_libraries(zmeshmend_core PRIVATE CGAL::CGAL Eigen3::Eigen)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(zmeshmend_core PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
 if(MSVC)
     target_link_libraries(zmeshmend_core PRIVATE psapi)

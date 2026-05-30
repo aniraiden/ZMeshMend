@@ -21,15 +21,16 @@
 [VarDef,dataDir,""]//ZMeshMendData folder path
 [VarDef,exePath,""]//path to zmeshmend_core.exe
 [VarDef,batPath,""]//path to launcher batch
-[VarDef,expPath,""]//path to exported OBJ
-[VarDef,impPath,""]//path to imported GoZ (preserves PolyGroups)
-[VarDef,expName,"zmeshmend_export.obj"]
-[VarDef,impName,"zmeshmend_import.obj"]
+[VarDef,expPath,""]//path to exported GoZ binary (含 MASK16_LIST)
+[VarDef,impPath,""]//path to imported GoZ (含 PolyGroups + 顶点位置)
+[VarDef,expName,"zmeshmend_export.goz"]
+[VarDef,impName,"zmeshmend_import.goz"]
 [VarDef,configPath,""]//path to ZMeshMend_config.txt
 [VarDef,batCmd,""]//batch file contents
 [VarDef,cfgBuf,""]//config file text buffer
 [VarDef,q,""]
 [VarDef,nl,""]
+[VarDef,aboutMsg,""]
 
 //Persistent settings (mirrored from ZMeshMend.py CONFIG dict)
 [VarDef,gPasses,1]//maskSharpenPasses (0-5)
@@ -96,9 +97,8 @@
 	[VarSet,dataDir,[StrMerge,scriptDir,"ZMeshMendData/"]]
 	[VarSet,exePath,[StrMerge,dataDir,"zmeshmend_core.exe"]]
 	[VarSet,expPath,[StrMerge,dataDir,expName]]
-	//Output as OBJ - ZBrush Tool:Import does NOT recognize .GoZ extension.
-	//core.exe writes full mesh OBJ with 'g group_1' (orig) / 'g group_2' (fill)
-	//so PolyGroups are preserved on import.
+	//ZBrush Tool:Export 凭文件名后缀 .goz 自动写 GoZ binary（含 MASK16_LIST）。
+	//ZBrush Tool:Import 凭 'GoZb' magic 自动识别 GoZ blob，PolyGroups 与 mask 一起保留。
 	[VarSet,impPath,[StrMerge,dataDir,impName]]
 	[VarSet,batPath,[StrMerge,dataDir,"zmeshmend_run.bat"]]
 	[VarSet,configPath,[StrMerge,dataDir,"zmeshmend_config.txt"]]
@@ -155,7 +155,6 @@
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations (1-20)",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
-	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxFactor=",gRelaxFactor,nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax damping factor (0.1-1.0)",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxFactor=",gRelaxFactor,nl,nl]]
 
@@ -224,10 +223,23 @@
 ]
 
 
+//Block CGAL operations on subdivided meshes.
+//在多 SubDiv 状态下导入 GoZ 会被 ZBrush 当成细分形变（Y 轴偏移等异常），
+//必须先回到 SDiv=1 才能安全替换 base mesh。
+[RoutineDef, CheckNoSubdiv,
+	[VarSet,sdivMax,[IGetMax,Tool:Geometry:SDiv]]
+	[If, sdivMax > 1,
+		[Note, "Cannot run on subdivided mesh. Please go to lowest SubDiv level (SDiv=1) and Tool > Geometry > Del Higher first.", , 4]
+		[Exit]
+	]
+]
+
+
 //Run zmeshmend_core.exe via direct LaunchAppWithFile (with args).
 //Output is GoZ format - PolyGroups (orig=1, fill=2) preserved on import.
 [RoutineDef, RunCGAL,
 	[RoutineCall, CheckSystem]
+	[RoutineCall, CheckNoSubdiv]
 	[RoutineCall, ResolvePaths]
 	//ensure exe exists
 	[If,[FileExists,exePath],,
@@ -288,6 +300,7 @@
 //Writes smoothBorder=1 config so core.exe runs in smooth-only mode.
 [RoutineDef, RunSmooth,
 	[RoutineCall, CheckSystem]
+	[RoutineCall, CheckNoSubdiv]
 	[RoutineCall, ResolvePaths]
 	[If,[FileExists,exePath],,
 		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
@@ -355,12 +368,14 @@
 
 [RoutineDef, RunRelax,
 	[RoutineCall, CheckSystem]
+	[RoutineCall, CheckNoSubdiv]
 	[RoutineCall, ResolvePaths]
 	[If,[FileExists,exePath],,
 		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
 		[Exit]
 	]
 
+	// 直接导出 GoZ binary（含 mask/groups/uv/mrgb），core 端从 GoZ 读取 mask
 	[FileNameSetNext, expPath]
 	[IPress, Tool:Export]
 
@@ -458,13 +473,14 @@
 
 //~~~About~~~
 [IButton,"ZPlugin:ZMeshMend:About ZMeshMend","Show plugin information and version.",
-	[Note,[StrMerge,"ZMeshMend ZScript v1.2.0",nl,nl,
-		"1. CGAL curvature-aware fill + PolyGroup",nl,
-		"2. Mask-driven cleanup",nl,
-		"3. Small fragment removal",nl,
-		"4. Smooth open edges",nl,
-		"5. Relax wireframe (CGAL smooth_shape)",nl,
-		"6. ZBrush Close Holes fallback"],,4737096,,500]
+	[VarSet,aboutMsg,"ZMeshMend ZScript v1.2.0"]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,nl,"1. CGAL curvature-aware fill + PolyGroup"]]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,"2. Mask-driven cleanup"]]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,"3. Small fragment removal"]]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,"4. Smooth open edges"]]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,"5. Relax wireframe (CGAL smooth_shape)"]]
+	[VarSet,aboutMsg,[StrMerge,aboutMsg,nl,"6. ZBrush Close Holes fallback"]]
+	[Note,aboutMsg,,3]
 ,,1]//end button
 
 

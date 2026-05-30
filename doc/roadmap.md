@@ -196,3 +196,77 @@ relaxIterations=3
 | 是否影响拓扑 | 否 | 纯顶点位置操作，不翻转边、不增删面 |
 | 是否需要新滑块 | 是，`Relax Iterations` | 与现有 `Smooth Iterations` 语义不同（全局 vs 边界），独立控制 |
 | 是否需要 `relaxWireframe` 配置标志 | 仅在 ZScript zero-arg 模式需要 | Python 模式通过 CLI `--relax-wireframe` 直接触达 |
+
+### 历次算法迭代（已固化）
+
+| 版本 | 思路 | 结果 |
+|---|---|---|
+| v1 | `PMP::smooth_shape()` | API 与版本不匹配，球化 |
+| v2 | 自实现切线 Laplacian | 全模型偏移 |
+| v3 | Laplacian + AABB 投影 | 多次迭代漂移 |
+| v4（当前）| oaRelaxVerts.mel 风格：**参考表面恒定** + Jacobi 迭代 | 用户认可：体积保持、布线均匀、收敛 |
+| v4 性能优化 | OpenMP `parallel for` + Jacobi swap + factor=1.0 | 速度满足实测要求 |
+
+参考文件：`H:\vibe_coding\ZMeshMend\ZMeshMend\reference\oaRelaxVerts.mel`（Maya `polyAverageVertex` + `geometryConstraint` snap，等价于"先平均到 1-ring 中心，再投影回参考表面"）。
+
+---
+
+## Relax Wireframe 遮罩分支（GoZ 中转方案）
+
+> 状态：✅ Python 版已完成验证 | ZScript 版待做 | 最后更新：2026-05-30
+
+### 行为
+
+- 有遮罩 → 仅放松遮罩区顶点（mask < 0x8000 视为遮罩）
+- 无遮罩 → 放松整个模型
+- 放松后保留原始 mask、不改 polygroup
+
+### 关键设计：GoZ binary 直传 mask
+
+- ZBrush `Tool:Export` 凭文件名后缀切格式：`.obj` → 文本（无 mask）；`.GoZ` → binary（含 `MASK16_LIST`）
+- core 端 `GoZ_Mesh::readMesh` 解析 `m_mask`（每顶点 16 bit，`0xFFFF=未遮罩`）
+- 输出仍写 GoZ blob，ZBrush Import 凭 `GoZb` magic 自动识别（即便后缀是 `.obj`）
+- 完全绕过 `Tool:PolyGroup:*` 子调色板 —— ZBrush 2026 Python SDK 对该子调色板 `zbc.press()` 全部抛 PyCapsule exception，[官方文档](https://developers.maxon.net/docs/zbrush/py/2026_1_0/manuals/api_overview.html#modeling-features)明确："Tools provide no significant API access at all at the moment."（ZScript 的 `IPress` 不受限）
+
+### 算法（oaRelaxVerts 风格，CGAL 实现）
+
+每次迭代：
+1. 全网格 Jacobi 1-ring 平均（`cur_positions` 读，`new_positions` 写）
+2. AABB tree 投影回原始参考表面（建一次，迭代复用）
+3. swap 双 buffer
+
+**关键 Bug 修复**：CGAL `Surface_mesh` 只支持三角面，`load_goz_to_cgal` 把 quad 拆成 `(a,b,c)+(a,c,d)`，对角线 `a-c` 被纳入 1-ring → Laplacian 偏向 quad 中心 → 顶点小范围游离、迭代收敛到错位。修复：`relax_wireframe` 接受可选参数 `edge_neighbors`，从 GoZ 原始 face4 数据构建真实 quad/tri 边邻居（不含对角线）。OBJ 路径无此问题，回退到 `halfedges_around_target`。
+
+### 关键文件
+
+| 文件 | 改动 |
+|---|---|
+| [ZMeshMend.py::do_relax_wireframe](file:///h:/vibe_coding/ZMeshMend/ZMeshMend/ZMeshMend/ZMeshMend.py) | 临时文件后缀 `.GoZ`，删 polygroup 探针整段 |
+| [zmeshmend_core.cpp::relax_wireframe](file:///h:/vibe_coding/ZMeshMend/ZMeshMend/ZMeshMendData/zmeshmend_core.cpp) | 新增 `edge_neighbors` 参数；从 `in_goz.m_mask` 构造 `vertex_allow`；输出 GoZ binary |
+| `ZMeshMend_config.txt` | `relaxFactor=1.0`（v4 调优值） |
+
+### 调研资料
+
+| 资料 | 路径/URL |
+|---|---|
+| GoZ SDK 官方源码（`MASK16_LIST` tag = 30001 等） | `H:\vibe_coding\ZMeshMend\goz_sdk\Sources\GoZ_Binary.h` |
+| Maya 参考算法 | `reference\oaRelaxVerts.mel` |
+| ZBrush Python SDK 限制声明 | https://developers.maxon.net/docs/zbrush/py/2026_1_0/manuals/api_overview.html |
+| ZScript ↔ Python API 对照 | https://developers.maxon.net/docs/zbrush/py/2026_1_0/manuals/migrating_zscript.html |
+
+### 关键 GoZ tag
+
+| Tag | 值 | 说明 |
+|---|---|---|
+| `POINT_LIST` | 10001 | 顶点 xyz float32×3 |
+| `FACE4_LIST_FORMAT_1` | 20001 | 4 索引/面，三角面末位 = -1 |
+| **`MASK16_LIST`** | **30001** | **每顶点 16-bit, 0xFFFF=未遮罩** |
+| `GROUPS_LIST` | 40001 | 每面 16-bit polygroup ID |
+| `END_OF_FILE` | 0 | 必须最后 |
+
+文件头：32 字节，前 4 字节 magic `"GoZb"`。每 block 开头 `GoZ_Header { uint32 tag; uint32 size; uint32 iCount; float modifier; }`，size 含 header 自身。
+
+### 待办
+
+- [ ] ZScript 版：`expName` 改 `.GoZ` 后缀，core 端逻辑无需改
+- [ ] 清理 `ZMeshMend.py` 中已无引用的 `_group_masked` / `_invert_mask` / `_mask_by_polygroups` 死函数（其他功能确认无依赖后再删）

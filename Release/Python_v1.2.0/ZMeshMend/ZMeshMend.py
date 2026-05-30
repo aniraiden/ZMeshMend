@@ -48,7 +48,7 @@ CONFIG = {
     "smoothIterations": 2,
     "smoothRings": 3,
     "relaxIterations": 3,
-    "relaxFactor": 0.3,
+    "relaxFactor": 1.0,
 }
 
 _config_comment_map = {
@@ -191,7 +191,10 @@ def _call_cgal_fill(input_obj, output_goz, fill_goz=None, debug_obj=None):
 
 
 def _call_cgal_relax_wireframe(input_obj, output_obj):
-    """调用 CGAL 核心 EXE 做全模型布线放松。
+    """调用 CGAL 核心 EXE 做布线放松。
+
+    输入 GoZ binary（含 MASK16_LIST）时，core 自动从 mask 构造 vertex_allow，
+    仅放松遮罩区顶点。输入 OBJ 文本时，core 退化为全模型放松。
 
     返回 True 表示成功。
     """
@@ -452,14 +455,63 @@ def _auto_groups():
 
 
 def _group_masked(clear_mask=True):
-    """从遮罩区域创建 PolyGroup"""
+    """从遮罩区域创建 PolyGroup。
+
+    ZBrush UI 显示为 'Polygroups'（复数），但 IPress 路径在不同版本/语言下可能是
+    单数 'PolyGroup' 或复数 'Polygroups'，且 'Group Masked' 与 'Group Masked Clear'
+    是两个独立按钮。中文版 ZBrush 的 IPress 路径可能采用中文菜单名。
+    这里依次尝试多个候选路径，命中第一个就停。
+
+    返回实际成功调用的路径字符串；全部失败返回 None。
+    """
+    if clear_mask:
+        candidates = [
+            "Tool:PolyGroup:Group Masked Clear",
+            "Tool:Polygroups:Group Masked Clear",
+            "Tool:PolyGroups:Group Masked Clear",
+            "Tool:Polygroup:Group Masked Clear",
+            "Tool:多边形组:遮罩分组并清除遮罩",
+            "工具:多边形组:遮罩分组并清除遮罩",
+            "Tool:多边形组:遮罩分组",
+        ]
+    else:
+        candidates = [
+            "Tool:PolyGroup:Group Masked",
+            "Tool:Polygroups:Group Masked",
+            "Tool:PolyGroups:Group Masked",
+            "Tool:Polygroup:Group Masked",
+            "Tool:多边形组:遮罩分组",
+            "工具:多边形组:遮罩分组",
+        ]
+
+    for path in candidates:
+        try:
+            zbc.press(path)
+            zbc.update()
+            _log(f"  [DEBUG] 已调用 polygroup 路径：'{path}'")
+            return path
+        except Exception as e:
+            _log(f"  [DEBUG] 路径失败：'{path}' -> {e}")
+            continue
+    _log("警告：所有 Group Masked 路径都失败")
+    return None
+
+
+def _collect_obj_groups(filepath):
+    """读取 OBJ 文件，返回按出现顺序去重的 polygroup 名列表。"""
+    groups = []
+    seen = set()
     try:
-        if clear_mask:
-            zbc.press("Tool:PolyGroup:Group Masked Clear")
-        else:
-            zbc.press("Tool:PolyGroup:Group Masked")
-    except Exception:
-        _log("警告：无法为遮罩区域创建组")
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.startswith("g "):
+                    name = line[2:].strip()
+                    if name and name not in seen:
+                        seen.add(name)
+                        groups.append(name)
+    except Exception as e:
+        _log(f"警告：解析 OBJ 组失败：{e}")
+    return groups
 
 
 def _mask_all():
@@ -1486,15 +1538,19 @@ def do_smooth_open_edges(sender=""):
 
 
 def do_relax_wireframe(sender=""):
-    """功能：全模型布线放松（Relax Wireframe）。
+    """功能：布线放松（Relax Wireframe）。
 
-    导出 OBJ → CGAL smooth_shape 切线方向放松 →
-    边界顶点固定保护 → 导入 OBJ 回 ZBrush。
+    - 无遮罩：放松整个模型。
+    - 有遮罩：仅放松遮罩区域顶点（mask < 0xFFFF 的顶点参与放松）。
 
-    不改变拓扑，顶点/面数不变，PolyGroup 完全保留。
+    流程：导出 GoZ binary（含 MASK16_LIST）→ CGAL 读 m_mask 构造 vertex_allow →
+          仅对遮罩区顶点做 oaRelaxVerts 风格放松 → 写回 GoZ → 导入。
+    放松后保留原始遮罩，不修改 polygroup。
+
+    不改变拓扑，顶点/面数不变。
     """
     _log("=" * 50)
-    _log("全模型布线放松（Relax Wireframe）")
+    _log("布线放松（Relax Wireframe）")
     _log("=" * 50)
 
     if not _ensure_edit_mode():
@@ -1513,19 +1569,19 @@ def do_relax_wireframe(sender=""):
         )
         return
 
-    tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_in.obj")
-    tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_out.obj")
+    tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_in.GoZ")
+    tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_out.GoZ")
 
-    _progress("正在导出网格……", 0.10)
+    _progress("正在导出 GoZ（含遮罩信息）……", 0.20)
     if not _export_obj(tmp_in):
-        _log("错误：导出网格失败")
+        _log("错误：导出 GoZ 失败")
         _clear_progress()
         return
 
-    _progress("CGAL 正在放松布线……", 0.30)
+    _progress("CGAL 正在放松布线……", 0.40)
     success = _call_cgal_relax_wireframe(tmp_in, tmp_out)
 
-    if success and os.path.exists(tmp_out) and _count_faces_in_obj(tmp_out) > 0:
+    if success and os.path.exists(tmp_out):
         _progress("正在导入放松后的网格……", 0.70)
         if _import_obj(tmp_out):
             zbc.update(redraw_ui=True)
@@ -1535,10 +1591,10 @@ def do_relax_wireframe(sender=""):
             _log("放松完成：仅沿切平面移动顶点，拓扑不变")
             _progress("完成！", 1.0)
             zbc.message_ok(
-                "全模型布线放松完成！\n\n"
-                "使用 CGAL smooth_shape 沿切平面方向放松，\n"
-                "保持体积和细节，边界顶点固定。\n"
-                "顶点数和面数不变，PolyGroup 完全保留。",
+                "布线放松完成！\n\n"
+                "有遮罩则仅放松遮罩区，否则放松全模型。\n"
+                "Laplacian 1-ring + AABB 投影回原始表面，\n"
+                "保持体积和细节，边界顶点固定。",
                 "ZMeshMend"
             )
         else:

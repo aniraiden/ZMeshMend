@@ -29,4 +29,4 @@ smoothRings=3
 relaxIterations=3
 
 # Global wireframe relax damping factor (0.1-1.0)
-relaxFactor=0.3
+relaxFactor=1.0

@@ -26,8 +26,8 @@ smoothIterations=2
 smoothRings=3
 
 # 全局布线放松迭代次数（1-20）
-relaxIterations=1
+relaxIterations=6
 
 # 全局布线放松阻尼因子（0.1-1.0，越小越保守）
-relaxFactor=0.3
+relaxFactor=1.0
 

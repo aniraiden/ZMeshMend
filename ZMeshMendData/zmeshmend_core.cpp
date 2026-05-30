@@ -25,6 +25,7 @@
 
 #include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
 #include <CGAL/Polygon_mesh_processing/triangulate_faces.h>
+#include <CGAL/Polygon_mesh_processing/tangential_relaxation.h>
 #include <CGAL/Polygon_mesh_processing/border.h>
 #include <CGAL/Polygon_mesh_processing/repair.h>
 #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
@@ -343,16 +344,24 @@ smooth_open_borders(Mesh& mesh, int iterations, int num_rings)
 }
 
 static void
-relax_wireframe(Mesh& mesh, int iterations, double factor)
+relax_wireframe(Mesh& mesh, int iterations, double factor,
+                const std::vector<unsigned char>* vertex_allow = nullptr,
+                const std::vector<std::vector<int>>* edge_neighbors = nullptr)
 {
     if (iterations <= 0) return;
 
-    std::cout << "Relax: building reference surface AABB tree..." << std::endl;
+    int total_vtx = (int)mesh.number_of_vertices();
+    if (total_vtx == 0) return;
+
+    if (factor <= 0.0) factor = 1.0;
+    if (factor > 1.0)  factor = 1.0;
+
+    std::cout << "Relax: building reference surface AABB tree (Maya oaRelaxVerts style)..." << std::endl;
 
     Mesh ref_mesh = mesh;
     if (!CGAL::is_triangle_mesh(ref_mesh))
     {
-        CGAL::Polygon_mesh_processing::triangulate_faces(ref_mesh);
+        PMP::triangulate_faces(ref_mesh);
     }
 
     typedef CGAL::AABB_face_graph_triangle_primitive<Mesh> Primitive;
@@ -360,78 +369,121 @@ relax_wireframe(Mesh& mesh, int iterations, double factor)
     typedef CGAL::AABB_tree<AABB_traits>                   AABB_tree;
 
     AABB_tree tree(faces(ref_mesh).first, faces(ref_mesh).second, ref_mesh);
+    tree.build();
     tree.accelerate_distance_queries();
 
-    std::set<Mesh::Vertex_index> boundary_set;
+    std::vector<unsigned char> is_boundary(total_vtx, 0);
+    int boundary_count = 0;
     for (auto h : mesh.halfedges())
     {
         if (CGAL::is_border(h, mesh))
         {
-            boundary_set.insert(mesh.target(h));
+            Mesh::Vertex_index v = mesh.target(h);
+            if (!is_boundary[(size_t)v])
+            {
+                is_boundary[(size_t)v] = 1;
+                ++boundary_count;
+            }
         }
     }
 
-    int total_vtx = (int)mesh.number_of_vertices();
-    int boundary_count = (int)boundary_set.size();
-    std::cout << "Relax: " << boundary_count << " boundary vertices fixed, "
-              << (total_vtx - boundary_count) << " interior vertices free, "
-              << "iterations=" << iterations << " factor=" << factor << std::endl;
-
-    std::vector<Point> new_positions(total_vtx);
-
-    for (int it = 0; it < iterations; ++it)
+    int allowed_count = 0;
+    if (vertex_allow)
     {
         for (auto v : mesh.vertices())
         {
-            if (boundary_set.count(v))
-            {
-                new_positions[(size_t)v] = mesh.point(v);
-                continue;
-            }
-
-            Mesh::Halfedge_index h0 = mesh.halfedge(v);
-            if (h0 == Mesh::null_halfedge())
-            {
-                new_positions[(size_t)v] = mesh.point(v);
-                continue;
-            }
-
-            double sx = 0, sy = 0, sz = 0;
-            int neighbor_count = 0;
-            Mesh::Halfedge_index h = h0;
-            do {
-                const Point& q = mesh.point(mesh.target(h));
-                sx += q.x(); sy += q.y(); sz += q.z();
-                ++neighbor_count;
-                h = mesh.next(mesh.opposite(h));
-            } while (h != h0);
-
-            if (neighbor_count == 0)
-            {
-                new_positions[(size_t)v] = mesh.point(v);
-                continue;
-            }
-
-            const Point& cur = mesh.point(v);
-            Point laplacian(sx / neighbor_count, sy / neighbor_count, sz / neighbor_count);
-
-            double tx = cur.x() + (laplacian.x() - cur.x()) * factor;
-            double ty = cur.y() + (laplacian.y() - cur.y()) * factor;
-            double tz = cur.z() + (laplacian.z() - cur.z()) * factor;
-            Point target(tx, ty, tz);
-
-            Point projected = tree.closest_point(target);
-            new_positions[(size_t)v] = projected;
+            if (!is_boundary[(size_t)v] && (size_t)v < vertex_allow->size() && (*vertex_allow)[(size_t)v])
+                ++allowed_count;
         }
-
-        for (auto v : mesh.vertices())
-        {
-            mesh.point(v) = new_positions[(size_t)v];
-        }
+        std::cout << "Relax: mask mode - " << allowed_count
+                  << " masked interior vertices will be relaxed, others fixed." << std::endl;
+    }
+    else
+    {
+        allowed_count = total_vtx - boundary_count;
     }
 
-    int moved_count = total_vtx - boundary_count;
-    std::cout << "Relax: " << moved_count << " interior vertices relaxed onto reference surface, done." << std::endl;
+    std::cout << "Relax: " << boundary_count << " boundary vertices fixed, "
+              << allowed_count << " interior vertices free, "
+              << "iterations=" << iterations << " factor=" << factor << std::endl;
+
+    std::vector<Point> cur_positions(total_vtx);
+    std::vector<Point> new_positions(total_vtx);
+
+    for (auto v : mesh.vertices())
+    {
+        cur_positions[(size_t)v] = mesh.point(v);
+    }
+
+    std::vector<Mesh::Vertex_index> all_verts;
+    all_verts.reserve(total_vtx);
+    for (auto v : mesh.vertices()) all_verts.push_back(v);
+
+    for (int it = 0; it < iterations; ++it)
+    {
+        new_positions = cur_positions;
+
+        const int n = (int)all_verts.size();
+
+        #pragma omp parallel for schedule(dynamic, 256)
+        for (int i = 0; i < n; ++i)
+        {
+            Mesh::Vertex_index v = all_verts[i];
+            if (is_boundary[(size_t)v]) continue;
+            if (vertex_allow && !(*vertex_allow)[(size_t)v]) continue;
+
+            double sx = 0, sy = 0, sz = 0;
+            int nb = 0;
+
+            if (edge_neighbors)
+            {
+                // 使用真实 quad/tri 边邻居（GoZ 原始拓扑），不被三角化对角线污染
+                const std::vector<int>& nlist = (*edge_neighbors)[(size_t)v];
+                for (int nbv : nlist)
+                {
+                    const Point& q = cur_positions[(size_t)nbv];
+                    sx += q.x(); sy += q.y(); sz += q.z();
+                    ++nb;
+                }
+            }
+            else
+            {
+                // 回退：CGAL 拓扑邻居（OBJ 路径，已是三角网格）
+                for (auto h : CGAL::halfedges_around_target(v, mesh))
+                {
+                    Mesh::Vertex_index nbv = mesh.source(h);
+                    if (nbv == v) continue;
+                    const Point& q = cur_positions[(size_t)nbv];
+                    sx += q.x(); sy += q.y(); sz += q.z();
+                    ++nb;
+                }
+            }
+
+            if (nb == 0) continue;
+
+            const Point& cur = cur_positions[(size_t)v];
+            double lx = sx / nb;
+            double ly = sy / nb;
+            double lz = sz / nb;
+
+            double tx = cur.x() + (lx - cur.x()) * factor;
+            double ty = cur.y() + (ly - cur.y()) * factor;
+            double tz = cur.z() + (lz - cur.z()) * factor;
+            Point target(tx, ty, tz);
+
+            new_positions[(size_t)v] = tree.closest_point(target);
+        }
+
+        cur_positions.swap(new_positions);
+    }
+
+    for (auto v : mesh.vertices())
+    {
+        mesh.point(v) = cur_positions[(size_t)v];
+    }
+
+    std::cout << "Relax: " << allowed_count
+              << " interior vertices relaxed (Laplacian -> snap to reference surface), done." << std::endl;
 }
 
 // ============================================================================
@@ -523,6 +575,9 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
 {
     out_goz.clear();
 
+    // 策略：从 in_goz 完整拷贝所有元数据（quad 拓扑、groups、mask、mrgb、uv 等），
+    // 仅追加新增填充面（CGAL refine+fair 出的三角面），不动原始 quad/tri。
+    // 这样原模型部分保持像素级一致，不会被三角化、也不会污染 MRGB/材质。
     out_goz.m_name = !in_goz.m_name.empty() ? in_goz.m_name : "GoZMesh";
     out_goz.m_material = in_goz.m_material;
     out_goz.m_flags = in_goz.m_flags;
@@ -530,12 +585,40 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
     out_goz.m_normalMap = in_goz.m_normalMap;
     out_goz.m_displacementMap = in_goz.m_displacementMap;
     out_goz.m_displacementScale = in_goz.m_displacementScale;
+    out_goz.m_faceType = in_goz.m_faceType ? in_goz.m_faceType : (int)GoZ_TAG_FACE4_LIST_FORMAT_1;
+    // mask 透传，mrgb 不输出（避免给补洞顶点写默认值污染 PolyPaint）。
+    out_goz.m_mask = in_goz.m_mask;
+    out_goz.m_mrgb.clear();
+    out_goz.m_uvs = in_goz.m_uvs;
+    out_goz.m_uvFaceType = in_goz.m_uvFaceType;
 
+    // 顶点：先复制原始 GoZ 顶点（位置可能被 fair 微调，从 mesh 取最新位置），
+    // 再为 mesh 中超出 in_goz.m_vertexCount 的顶点追加坐标。
     int orig_vertex_count = in_goz.m_vertexCount;
+    int total_v = (int)mesh.number_of_vertices();
+    out_goz.m_vertexCount = total_v;
+    out_goz.m_vertices.resize(total_v * 3);
+    for (int vi = 0; vi < total_v; ++vi)
+    {
+        Mesh::Vertex_index v(vi);
+        Point p = mesh.point(v);
+        out_goz.m_vertices[vi * 3 + 0] = static_cast<float>(p.x());
+        out_goz.m_vertices[vi * 3 + 1] = static_cast<float>(p.y());
+        out_goz.m_vertices[vi * 3 + 2] = static_cast<float>(p.z());
+    }
+    // mask/mrgb 给新增顶点补默认值。
+    // mask 默认 0xFFFF（无遮罩）。
+    // mrgb 不能用 0xFFFFFFFF（白色），会让补洞区域被涂白；改用原模型第一个顶点的 mrgb，
+    // 让新填充区域与周围 PolyPaint 视觉上一致。
+    if (!out_goz.m_mask.empty() && (int)out_goz.m_mask.size() < total_v)
+        out_goz.m_mask.resize(total_v, 0xFFFF);
+    if (!out_goz.m_mrgb.empty() && (int)out_goz.m_mrgb.size() < total_v)
+    {
+        unsigned int default_mrgb = out_goz.m_mrgb[0];
+        out_goz.m_mrgb.resize(total_v, default_mrgb);
+    }
 
-    std::map<Mesh::Vertex_index, int> full_vmap;
-    build_goz_vertex_map_and_faces(mesh, orig_faces, out_goz, full_vmap);
-
+    // 面：原始 face4 直接复用，新增 fill 面以 face4 形式追加（tri 时第 4 索引 = -1）。
     short max_group = 0;
     if (!in_goz.m_groups.empty())
     {
@@ -543,49 +626,38 @@ static void build_output_goz(GoZ_Mesh& in_goz, const Mesh& mesh,
             if (in_goz.m_groups[fi] > max_group)
                 max_group = in_goz.m_groups[fi];
     }
-    short new_group = max_group + 1;
+    short new_group = max_group > 0 ? (short)(max_group + 1) : (short)2;
 
-    int out_fi = 0;
+    // 1) 原始 GoZ 面整体保留（顶点索引不变，因为我们用的就是 mesh 顶点 0..orig_vc-1）。
+    out_goz.m_faceCount = in_goz.m_faceCount;
+    out_goz.m_vertexIndices = in_goz.m_vertexIndices; // 4 * face count
+    out_goz.m_groups = in_goz.m_groups;
+    if ((int)out_goz.m_groups.size() != out_goz.m_faceCount)
+        out_goz.m_groups.assign(out_goz.m_faceCount, 1);
+
+    // 2) 收集 CGAL mesh 中的"新增面"（不在 orig_faces 中），以 face4 quad 形式追加。
+    int added = 0;
     for (auto f : mesh.faces())
     {
-        bool is_new_face = (orig_faces.find(f) == orig_faces.end());
-
-        std::vector<Mesh::Vertex_index> verts;
+        if (orig_faces.find(f) != orig_faces.end()) continue;
+        std::vector<int> verts;
         for (auto v : CGAL::vertices_around_face(mesh.halfedge(f), mesh))
-            verts.push_back(v);
-
-        if (verts.size() >= 3)
-        {
-            out_goz.m_vertexIndices[out_fi * 3 + 0] = full_vmap[verts[0]];
-            out_goz.m_vertexIndices[out_fi * 3 + 1] = full_vmap[verts[1]];
-            out_goz.m_vertexIndices[out_fi * 3 + 2] = full_vmap[verts[2]];
-
-            if (is_new_face)
-                out_goz.m_groups[out_fi] = new_group;
-            else
-                out_goz.m_groups[out_fi] = !in_goz.m_groups.empty() ? in_goz.m_groups[face_to_goz_face[out_fi]] : 1;
-
-            ++out_fi;
-        }
+            verts.push_back((int)v);
+        if (verts.size() < 3) continue;
+        // 三角面 → face4 写法 (a, b, c, -1)；quad 罕见但兼容。
+        int v0 = verts[0], v1 = verts[1], v2 = verts[2];
+        int v3 = (verts.size() >= 4) ? verts[3] : -1;
+        out_goz.m_vertexIndices.push_back(v0);
+        out_goz.m_vertexIndices.push_back(v1);
+        out_goz.m_vertexIndices.push_back(v2);
+        out_goz.m_vertexIndices.push_back(v3);
+        out_goz.m_groups.push_back(new_group);
+        ++added;
     }
+    out_goz.m_faceCount += added;
 
-    out_goz.m_mask.resize(out_goz.m_vertexCount);
-    for (auto& pair : full_vmap)
-    {
-        Mesh::Vertex_index v = pair.first;
-        int goz_idx = pair.second;
-        if (static_cast<int>(v) < orig_vertex_count && !in_goz.m_mask.empty())
-            out_goz.m_mask[goz_idx] = in_goz.m_mask[static_cast<int>(v)];
-        else
-            out_goz.m_mask[goz_idx] = 0xFFFF;
-    }
-
-    if (!in_goz.m_mrgb.empty())
-    {
-        out_goz.m_mrgb.resize(out_goz.m_vertexCount);
-        for (int vi = 0; vi < out_goz.m_vertexCount; ++vi)
-            out_goz.m_mrgb[vi] = 0xFFFFFFFF;
-    }
+    // 不再向 face_to_goz_face 处写白色 mrgb；保持原模型外观。
+    (void)face_to_goz_face;
 }
 
 static void write_fill_only_obj(const Mesh& mesh,
@@ -758,7 +830,7 @@ int main(int argc, char* argv[])
     bool   opt_smooth_only       = false;
     bool   opt_relax_wireframe   = false;
     int    opt_relax_iterations  = 3;
-    double opt_relax_factor      = 0.3;
+    double opt_relax_factor      = 1.0;
 
     if (argc < 3)
     {
@@ -783,9 +855,10 @@ int main(int argc, char* argv[])
             if (s) { fprintf(s, "started\n"); fclose(s); }
         }
         //ZCloseHoles 模式：从 zmeshmend_config.txt 读取所有内容，
-        //输入 = zmeshmend_export.obj，输出 = zmeshmend_import.obj。
-        in_path  = "zmeshmend_export.obj";
-        out_path = "zmeshmend_import.obj";
+        //输入 = zmeshmend_export.goz，输出 = zmeshmend_import.goz。
+        //（ZScript 路径，使用 GoZ binary 携带 mask/groups。）
+        in_path  = "zmeshmend_export.goz";
+        out_path = "zmeshmend_import.goz";
 
         FILE* cf = fopen("zmeshmend_config.txt", "r");
         if (cf)
@@ -969,6 +1042,33 @@ int main(int argc, char* argv[])
 
     if (opt_smooth_only)
     {
+        if (from_goz)
+        {
+            // 输出 GoZ binary：拷贝原始 GoZ 元数据，仅替换顶点位置（保留原始 quad/tri 拓扑）
+            // mrgb 清空避免 PolyPaint 被覆盖。
+            GoZ_Mesh out_goz = in_goz;
+            out_goz.m_mrgb.clear();
+            for (int vi = 0; vi < in_goz.m_vertexCount; ++vi)
+            {
+                Mesh::Vertex_index v(vi);
+                Point p = mesh.point(v);
+                out_goz.m_vertices[vi * 3 + 0] = static_cast<float>(p.x());
+                out_goz.m_vertices[vi * 3 + 1] = static_cast<float>(p.y());
+                out_goz.m_vertices[vi * 3 + 2] = static_cast<float>(p.z());
+            }
+            if (!out_goz.writeMesh(out_path.c_str()))
+            {
+                std::cerr << "ERROR: Cannot write GoZ: " << out_path << std::endl;
+                pause_if_needed();
+                return 1;
+            }
+            std::cout << "Smooth only: " << in_goz.m_vertexCount << " vertices, "
+                      << in_goz.m_faceCount << " faces -> " << out_path << " (GoZ)" << std::endl;
+            write_progress(1.0f);
+            std::cout << "SUCCESS (smooth open edges)" << std::endl;
+            pause_if_needed();
+            return 0;
+        }
         std::ofstream out(out_path);
         if (!out)
         {
@@ -1019,51 +1119,165 @@ int main(int argc, char* argv[])
 
     if (opt_relax_wireframe)
     {
-        relax_wireframe(mesh, opt_relax_iterations, opt_relax_factor);
+        std::vector<unsigned char> vertex_allow;
+        bool use_mask = false;
 
-        std::ofstream out(out_path);
-        if (!out)
+        // 从 GoZ 原始 face 数据构建真实边邻居（quad/tri），
+        // 避免使用 CGAL mesh 的三角化拓扑（quad 被拆成两个 tri 时对角线会污染 1-ring）。
+        std::vector<std::vector<int>> edge_neighbors;
+        const std::vector<std::vector<int>>* edge_neighbors_ptr = nullptr;
+        if (from_goz)
         {
-            std::cerr << "ERROR: Cannot open OBJ for write: " << out_path << std::endl;
-            pause_if_needed();
-            return 1;
-        }
-        out << "# ZMeshMend relax wireframe\n";
-        out << std::fixed << std::setprecision(6);
-        std::map<Mesh::Vertex_index, std::size_t> vidx;
-        std::size_t vcount = 0;
-        for (auto v : mesh.vertices())
-        {
-            const auto& p = mesh.point(v);
-            out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
-            vidx[v] = ++vcount;
-        }
-        std::vector<std::string> orig_groups;
-        {
-            std::ifstream gs(in_path);
-            std::string line, cur = "orig";
-            while (std::getline(gs, line))
+            int total_v = in_goz.m_vertexCount;
+            edge_neighbors.assign(total_v, std::vector<int>());
+            std::vector<std::set<int>> nbset(total_v);
+            for (int fi = 0; fi < in_goz.m_faceCount; ++fi)
             {
-                if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
-                    cur = line.substr(2);
-                else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
-                    orig_groups.push_back(cur);
+                const int* idx = in_goz.m_vertexIndices.data() + fi * 4;
+                int v0 = idx[0], v1 = idx[1], v2 = idx[2], v3 = idx[3];
+                bool is_tri = (v3 < 0 || v3 == v2);
+                if (is_tri)
+                {
+                    nbset[v0].insert(v1); nbset[v1].insert(v0);
+                    nbset[v1].insert(v2); nbset[v2].insert(v1);
+                    nbset[v2].insert(v0); nbset[v0].insert(v2);
+                }
+                else
+                {
+                    // quad 边邻居：仅 4 条边 v0-v1, v1-v2, v2-v3, v3-v0（不含对角线）
+                    nbset[v0].insert(v1); nbset[v1].insert(v0);
+                    nbset[v1].insert(v2); nbset[v2].insert(v1);
+                    nbset[v2].insert(v3); nbset[v3].insert(v2);
+                    nbset[v3].insert(v0); nbset[v0].insert(v3);
+                }
+            }
+            for (int vi = 0; vi < total_v; ++vi)
+            {
+                edge_neighbors[vi].assign(nbset[vi].begin(), nbset[vi].end());
+            }
+            edge_neighbors_ptr = &edge_neighbors;
+            std::cout << "Relax: built quad/tri edge neighbors from GoZ ("
+                      << in_goz.m_faceCount << " faces)" << std::endl;
+        }
+
+        // 从 GoZ MASK16_LIST 直接构造 vertex_allow：
+        // mask 值 < 0x8000（半遮罩中点）的顶点视为遮罩区，参与放松。
+        // 全部 = 0xFFFF（无遮罩）则退化为全模型放松。
+        if (from_goz && !in_goz.m_mask.empty()
+            && (int)in_goz.m_mask.size() == in_goz.m_vertexCount
+            && (int)mesh.number_of_vertices() == in_goz.m_vertexCount)
+        {
+            int masked_count = 0;
+            int total_v = (int)mesh.number_of_vertices();
+            vertex_allow.assign(total_v, 0);
+            for (int vi = 0; vi < total_v; ++vi)
+            {
+                if (in_goz.m_mask[vi] < 0x8000)
+                {
+                    vertex_allow[vi] = 1;
+                    ++masked_count;
+                }
+            }
+            if (masked_count > 0 && masked_count < total_v)
+            {
+                use_mask = true;
+                std::cout << "Relax: GoZ mask detected -> " << masked_count
+                          << " / " << total_v << " vertices in masked region." << std::endl;
+            }
+            else if (masked_count == 0)
+            {
+                std::cout << "Relax: no masked vertices, full-mesh relax." << std::endl;
+            }
+            else
+            {
+                std::cout << "Relax: entire mesh masked, treating as full-mesh relax." << std::endl;
             }
         }
-        std::string last_g;
-        for (auto f : mesh.faces())
+        else if (from_goz)
         {
-            size_t fidx = (size_t)f;
-            std::string gname = (fidx < orig_groups.size()) ? orig_groups[fidx] : "orig";
-            if (gname != last_g) { out << "g " << gname << '\n'; last_g = gname; }
-            out << 'f';
-            auto h0 = mesh.halfedge(f);
-            auto h = h0;
-            do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
-            out << '\n';
+            std::cout << "Relax: GoZ input has no MASK16_LIST, full-mesh relax." << std::endl;
         }
-        std::cout << "Relax wireframe: " << vcount << " vertices, "
-                  << mesh.number_of_faces() << " faces -> " << out_path << std::endl;
+        else
+        {
+            std::cout << "Relax: OBJ input (no mask channel), full-mesh relax." << std::endl;
+        }
+
+        if (use_mask)
+            relax_wireframe(mesh, opt_relax_iterations, opt_relax_factor, &vertex_allow, edge_neighbors_ptr);
+        else
+            relax_wireframe(mesh, opt_relax_iterations, opt_relax_factor, nullptr, edge_neighbors_ptr);
+
+        // 输出 GoZ binary，保留原始 mask / groups / mrgb / uv 等。
+        // ZBrush Tool:Import 凭 'GoZb' magic 自动识别 GoZ 格式。
+        if (from_goz)
+        {
+            // 拷贝输入 GoZ 元数据，仅替换顶点位置。mrgb 清空避免覆盖 PolyPaint。
+            GoZ_Mesh out_goz = in_goz;
+            out_goz.m_mrgb.clear();
+            for (int vi = 0; vi < in_goz.m_vertexCount; ++vi)
+            {
+                Mesh::Vertex_index v(vi);
+                Point p = mesh.point(v);
+                out_goz.m_vertices[vi * 3 + 0] = static_cast<float>(p.x());
+                out_goz.m_vertices[vi * 3 + 1] = static_cast<float>(p.y());
+                out_goz.m_vertices[vi * 3 + 2] = static_cast<float>(p.z());
+            }
+            if (!out_goz.writeMesh(out_path.c_str()))
+            {
+                std::cerr << "ERROR: Cannot write GoZ: " << out_path << std::endl;
+                pause_if_needed();
+                return 1;
+            }
+            std::cout << "Relax wireframe: " << in_goz.m_vertexCount << " vertices -> "
+                      << out_path << " (GoZ)" << std::endl;
+        }
+        else
+        {
+            // OBJ 路径回退（CLI 直接传 .obj 输入时保留兼容性）。
+            std::ofstream out(out_path);
+            if (!out)
+            {
+                std::cerr << "ERROR: Cannot open OBJ for write: " << out_path << std::endl;
+                pause_if_needed();
+                return 1;
+            }
+            out << "# ZMeshMend relax wireframe\n";
+            out << std::fixed << std::setprecision(6);
+            std::map<Mesh::Vertex_index, std::size_t> vidx;
+            std::size_t vcount = 0;
+            for (auto v : mesh.vertices())
+            {
+                const auto& p = mesh.point(v);
+                out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
+                vidx[v] = ++vcount;
+            }
+            std::vector<std::string> orig_groups;
+            {
+                std::ifstream gs(in_path);
+                std::string line, cur = "orig";
+                while (std::getline(gs, line))
+                {
+                    if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
+                        cur = line.substr(2);
+                    else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
+                        orig_groups.push_back(cur);
+                }
+            }
+            std::string last_g;
+            for (auto f : mesh.faces())
+            {
+                size_t fidx = (size_t)f;
+                std::string gname = (fidx < orig_groups.size()) ? orig_groups[fidx] : "orig";
+                if (gname != last_g) { out << "g " << gname << '\n'; last_g = gname; }
+                out << 'f';
+                auto h0 = mesh.halfedge(f);
+                auto h = h0;
+                do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
+                out << '\n';
+            }
+            std::cout << "Relax wireframe: " << vcount << " vertices, "
+                      << mesh.number_of_faces() << " faces -> " << out_path << std::endl;
+        }
         write_progress(1.0f);
         std::cout << "SUCCESS (relax wireframe)" << std::endl;
         pause_if_needed();
@@ -1150,21 +1364,9 @@ int main(int argc, char* argv[])
         }
         if (from_goz)
         {
-            GoZ_Mesh out_goz;
-            out_goz.m_name = in_goz.m_name;
-            out_goz.m_faceType = in_goz.m_faceType;
-            out_goz.m_vertexCount = in_goz.m_vertexCount;
-            out_goz.m_vertices = in_goz.m_vertices;
-            out_goz.m_faceCount = in_goz.m_faceCount;
-            out_goz.m_vertexIndices = in_goz.m_vertexIndices;
-            if (!in_goz.m_groups.empty())
-            {
-                out_goz.m_groups = in_goz.m_groups;
-            }
-            if (!in_goz.m_mask.empty())
-            {
-                out_goz.m_mask = in_goz.m_mask;
-            }
+            // 完整透传原 GoZ（保留 quad/groups/mask/uv），仅清空 mrgb 以保 PolyPaint。
+            GoZ_Mesh out_goz = in_goz;
+            out_goz.m_mrgb.clear();
             out_goz.writeMesh(out_path.c_str());
             if (write_fill_only)
                 out_goz.writeMesh(fill_path.c_str());
