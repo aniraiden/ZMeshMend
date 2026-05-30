@@ -47,6 +47,8 @@ CONFIG = {
     "smoothBorder": False,
     "smoothIterations": 2,
     "smoothRings": 3,
+    "relaxWireframe": False,
+    "relaxIterations": 3,
 }
 
 _config_comment_map = {
@@ -58,6 +60,8 @@ _config_comment_map = {
     "smoothBorder": "平滑边界模式（1=仅平滑, 0=正常补洞）",
     "smoothIterations": "边界平滑迭代次数（1-20）",
     "smoothRings": "边界平滑向内扩展圈数（1-20）",
+    "relaxWireframe": "全局布线放松模式（1=放松, 0=正常补洞）",
+    "relaxIterations": "全局布线放松迭代次数（1-20）",
 }
 
 
@@ -181,6 +185,64 @@ def _call_cgal_fill(input_obj, output_goz, fill_goz=None, debug_obj=None):
     except subprocess.TimeoutExpired:
         _log(f"  [CGAL] EXE 超时（300 秒）")
         return False, -1
+    except Exception as e:
+        _log(f"  [CGAL] 错误：{e}")
+        return False
+
+
+def _call_cgal_relax_wireframe(input_obj, output_obj):
+    """调用 CGAL 核心 EXE 做全模型布线放松。
+
+    返回 True 表示成功。
+    """
+    iterations = CONFIG["relaxIterations"]
+    args = [
+        _CGAL_EXE_PATH,
+        input_obj,
+        output_obj,
+        "--relax-wireframe",
+        "--relax-iterations", str(iterations),
+    ]
+
+    try:
+        p = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=_CGAL_DATA_DIR,
+        )
+
+        stdout = p.stdout
+        stderr = p.stderr
+
+        if stderr:
+            for line in stderr.strip().split("\n"):
+                if line.strip():
+                    _log(f"  [CGAL] {line.strip()}")
+
+        for line in stdout.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            _log(f"  [CGAL] {line}")
+
+        if p.returncode != 0:
+            _log(f"  [CGAL] EXE 返回错误码 {p.returncode}")
+            return False
+
+        if not os.path.exists(output_obj):
+            _log(f"  [CGAL] 输出文件未创建")
+            return False
+
+        return True
+
+    except FileNotFoundError:
+        _log(f"  [CGAL] 未找到 EXE：{_CGAL_EXE_PATH}")
+        return False
+    except subprocess.TimeoutExpired:
+        _log(f"  [CGAL] EXE 超时（300 秒）")
+        return False
     except Exception as e:
         _log(f"  [CGAL] 错误：{e}")
         return False, -1
@@ -1421,6 +1483,82 @@ def do_smooth_open_edges(sender=""):
     _clear_progress()
 
 
+def do_relax_wireframe(sender=""):
+    """功能：全模型布线放松（Relax Wireframe）。
+
+    导出 OBJ → CGAL smooth_shape 切线方向放松 →
+    边界顶点固定保护 → 导入 OBJ 回 ZBrush。
+
+    不改变拓扑，顶点/面数不变，PolyGroup 完全保留。
+    """
+    _log("=" * 50)
+    _log("全模型布线放松（Relax Wireframe）")
+    _log("=" * 50)
+
+    if not _ensure_edit_mode():
+        return
+
+    vtx_before = _get_vertex_count()
+    face_before = _get_face_count()
+    _log(f"之前：{vtx_before} 顶点，{face_before} 面")
+
+    if not _cgal_available():
+        _log("CGAL 核心未找到，无法执行布线放松。")
+        zbc.message_ok(
+            "CGAL 核心未找到！\n\n"
+            "请将 zmeshmend_core.exe 编译到 ZMeshMendData/ 目录。",
+            "ZMeshMend"
+        )
+        return
+
+    tmp_in = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_in.obj")
+    tmp_out = os.path.join(tempfile.gettempdir(), "zmeshmend_relax_out.obj")
+
+    _progress("正在导出网格……", 0.10)
+    if not _export_obj(tmp_in):
+        _log("错误：导出网格失败")
+        _clear_progress()
+        return
+
+    _progress("CGAL 正在放松布线……", 0.30)
+    success = _call_cgal_relax_wireframe(tmp_in, tmp_out)
+
+    if success and os.path.exists(tmp_out) and _count_faces_in_obj(tmp_out) > 0:
+        _progress("正在导入放松后的网格……", 0.70)
+        if _import_obj(tmp_out):
+            zbc.update(redraw_ui=True)
+            vtx_after = _get_vertex_count()
+            face_after = _get_face_count()
+            _log(f"之后：{vtx_after} 顶点，{face_after} 面")
+            _log("放松完成：仅沿切平面移动顶点，拓扑不变")
+            _progress("完成！", 1.0)
+            zbc.message_ok(
+                "全模型布线放松完成！\n\n"
+                "使用 CGAL smooth_shape 沿切平面方向放松，\n"
+                "保持体积和细节，边界顶点固定。\n"
+                "顶点数和面数不变，PolyGroup 完全保留。",
+                "ZMeshMend"
+            )
+        else:
+            _log("错误：导入放松结果失败")
+            zbc.message_ok("导入失败！", "ZMeshMend - 错误")
+    else:
+        _log("CGAL 布线放松失败或输出为空")
+        zbc.message_ok(
+            "布线放松失败！\n\n"
+            "请检查 CGAL 控制台输出以获取详细信息。",
+            "ZMeshMend - 错误"
+        )
+
+    for f in [tmp_in, tmp_out]:
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+
+    _clear_progress()
+
+
 def do_close_with_polygroup_mask(sender=""):
     """功能 3+4：使用 CGAL refine+fair 闭合孔洞，为填充区域分配新 PolyGroup。
 
@@ -1701,6 +1839,10 @@ def _on_smooth_open_edges_click(sender=""):
     _freeze_op(lambda: do_smooth_open_edges(sender), "正在平滑开放边界环……")
 
 
+def _on_relax_wireframe_click(sender=""):
+    _freeze_op(lambda: do_relax_wireframe(sender), "正在放松全模型布线……")
+
+
 def _on_config_change(sender="", value=0.0):
     """处理配置滑块/开关的变更"""
     name = sender.split(":")[-1] if ":" in sender else sender
@@ -1726,17 +1868,21 @@ def _on_config_change(sender="", value=0.0):
     elif name == "Smooth Rings":
         CONFIG["smoothRings"] = int(value)
         save_config()
+    elif name == "Relax Iterations":
+        CONFIG["relaxIterations"] = int(value)
+        save_config()
 
 
 def _on_info_click(sender=""):
     """显示插件信息"""
     zbc.message_ok(
-        "ZMeshMend v1.1.0\n\n"
+        "ZMeshMend v1.2.0\n\n"
         "1. CGAL 曲率感知补洞 + PolyGroup 标记\n"
         "2. 遮罩驱动网格清理\n"
         "3. 小碎片自动移除\n"
         "4. 平滑开放边缘（边界 Chaikin + Laplacian）\n"
-        "5. ZBrush 内置 Close Holes 兜底",
+        "5. 全模型布线放松（CGAL smooth_shape）\n"
+        "6. ZBrush 内置 Close Holes 兜底",
         "ZMeshMend"
     )
 
@@ -1788,6 +1934,14 @@ def build_ui():
         "对开放边界环做 Chaikin 平滑 + 多圈 falloff，"
         "使洞口边缘更流畅，不改变拓扑。",
         _on_smooth_open_edges_click,
+        width=1.0,
+    )
+
+    zbc.add_button(
+        _ui_path("Close Holes:Relax Wireframe"),
+        "使用 CGAL smooth_shape 对全模型布线做切线方向放松，"
+        "保持体积和细节，边界顶点固定不动。",
+        _on_relax_wireframe_click,
         width=1.0,
     )
 
@@ -1867,6 +2021,17 @@ def build_ui():
         width=1.0,
     )
 
+    zbc.add_slider(
+        _ui_path("Settings:Relax Iterations"),
+        float(CONFIG["relaxIterations"]),
+        1,
+        1.0,
+        20.0,
+        "全局布线放松迭代次数（1-20）。",
+        _on_config_change,
+        width=1.0,
+    )
+
     zbc.add_subpalette(SUBPALETTE_INFO, title_mode=0)
 
     zbc.add_button(
@@ -1894,7 +2059,7 @@ def build_ui():
     zbc.maximize(SUBPALETTE_CONF)
     zbc.maximize(SUBPALETTE_INFO)
 
-    _log("ZMeshMend v1.1.0 已加载")
+    _log("ZMeshMend v1.2.0 已加载")
     _log(f"配置路径：{CONFIG_PATH}")
     if _cgal_available():
         _log(f"CGAL 核心：{_CGAL_EXE_REL}")

@@ -39,6 +39,7 @@
 [VarDef,gMinFaces,50]//fragmentMinFaces (1-500)
 [VarDef,gSmoothIter,2]//smoothIterations (1-20)
 [VarDef,gSmoothRings,3]//smoothRings (1-20)
+[VarDef,gRelaxIter,3]//relaxIterations (1-20)
 
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -148,7 +149,9 @@
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth iterations (1-20)",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothIterations=",gSmoothIter,nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth rings inward (1-20)",nl]]
-	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
 
 	//Delete temp first
 	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
@@ -314,6 +317,71 @@
 	[RoutineCall, SaveConfig]
 ]
 
+[RoutineDef, SaveRelaxConfig,
+	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration (Relax)",nl,"# Auto-generated for relax operation.",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxWireframe=1",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Global wireframe relax iterations",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"relaxIterations=",gRelaxIter,nl]]
+
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	[If,[MemGetSize,ZMM_CfgMem],
+		[MemDelete,ZMM_CfgMem]
+	]
+	[MemCreate,ZMM_CfgMem,4096,0]
+	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
+	[MemDelete,ZMM_CfgMem]
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
+]
+
+[RoutineDef, RunRelax,
+	[RoutineCall, CheckSystem]
+	[RoutineCall, ResolvePaths]
+	[If,[FileExists,exePath],,
+		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[FileNameSetNext, expPath]
+	[IPress, Tool:Export]
+
+	[If,[FileExists,expPath],,
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[If,[FileExists,impPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
+	]
+
+	[RoutineCall, SaveRelaxConfig]
+
+	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+
+	[Note, [StrMerge,"Relax Wireframe is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
+
+	[If,[FileExists,impPath],
+		[FileNameSetNext, impPath]
+		[IPress, Tool:Import]
+		[Note, "Relax Wireframe complete (PolyGroups preserved).", , 2]
+	,
+		[Note,[StrMerge,"Relax output not found at:",nl,impPath],,3,4737096,,500]
+	]
+
+	[RoutineCall, SaveConfig]
+]
+
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 //~~~INTERFACE
@@ -373,15 +441,22 @@
 	[Note,"Smooth Open Edge complete!",,2]
 ,,1]//end button
 
+[IButton,"ZPlugin:ZMeshMend:Relax Wireframe","CGAL smooth_shape tangent relax. Preserves volume, boundary vertices fixed.",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RunRelax]
+	[Note,"Relax Wireframe complete!",,2]
+,,1]//end button
+
 
 //~~~About~~~
 [IButton,"ZPlugin:ZMeshMend:About ZMeshMend","Show plugin information and version.",
-	[Note,[StrMerge,"ZMeshMend ZScript v1.1.0",nl,nl,
+	[Note,[StrMerge,"ZMeshMend ZScript v1.2.0",nl,nl,
 		"1. CGAL curvature-aware fill + PolyGroup",nl,
 		"2. Mask-driven cleanup",nl,
 		"3. Small fragment removal",nl,
 		"4. Smooth open edges",nl,
-		"5. ZBrush Close Holes fallback"],,4737096,,500]
+		"5. Relax wireframe (CGAL smooth_shape)",nl,
+		"6. ZBrush Close Holes fallback"],,4737096,,500]
 ,,1]//end button
 
 
@@ -432,6 +507,13 @@
 [ISlider,"ZPlugin:ZMeshMend:Settings:Smooth Rings",3,1,1,20,
 	"Number of rings to smooth inward from border (1-20).",
 	[VarSet,gSmoothRings,[IGet,"ZPlugin:ZMeshMend:Settings:Smooth Rings"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Relax Iterations",3,1,1,20,
+	"Global wireframe relax iterations (1-20).",
+	[VarSet,gRelaxIter,[IGet,"ZPlugin:ZMeshMend:Settings:Relax Iterations"]]
 	[RoutineCall, ResolvePaths]
 	[RoutineCall, SaveConfig]
 ,,1]

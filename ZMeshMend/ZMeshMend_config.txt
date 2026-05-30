@@ -24,3 +24,6 @@ smoothIterations=2
 
 # Number of rings to smooth inward from border (1-20)
 smoothRings=3
+
+# Number of global wireframe relax iterations (1-20)
+relaxIterations=3

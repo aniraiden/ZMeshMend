@@ -32,6 +32,7 @@
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Polygon_mesh_processing/stitch_borders.h>
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
+#include <CGAL/Polygon_mesh_processing/smooth_shape.h>
 #include <CGAL/boost/graph/helpers.h>
 #include <CGAL/IO/polygon_soup_io.h>
 
@@ -337,6 +338,42 @@ smooth_open_borders(Mesh& mesh, int iterations, int num_rings)
     }
 
     std::cout << "Smooth: moved " << total_moved << " vertex position(s)." << std::endl;
+}
+
+static void
+relax_wireframe(Mesh& mesh, int iterations)
+{
+    if (iterations <= 0) return;
+
+    std::cout << "Relax: collecting boundary vertices..." << std::endl;
+
+    Mesh::Property_map<Mesh::Vertex_index, bool> constrained =
+        mesh.add_property_map<Mesh::Vertex_index, bool>("v:constrained", false).first;
+
+    int boundary_count = 0;
+    for (auto h : mesh.halfedges())
+    {
+        if (CGAL::is_border(h, mesh))
+        {
+            auto v = mesh.target(h);
+            if (!constrained[v])
+            {
+                constrained[v] = true;
+                ++boundary_count;
+            }
+        }
+    }
+
+    std::cout << "Relax: " << boundary_count << " boundary vertices constrained, "
+              << "iterations=" << iterations << std::endl;
+
+    CGAL::Polygon_mesh_processing::smooth_shape(
+        mesh,
+        CGAL::parameters::number_of_iterations(iterations)
+                         .time_step(0.75)
+                         .vertex_is_constrained_map(constrained));
+
+    std::cout << "Relax: done." << std::endl;
 }
 
 // ============================================================================
@@ -661,6 +698,8 @@ int main(int argc, char* argv[])
     int    opt_smooth_iterations = 2;
     int    opt_smooth_rings      = 3;
     bool   opt_smooth_only       = false;
+    bool   opt_relax_wireframe   = false;
+    int    opt_relax_iterations  = 3;
 
     if (argc < 3)
     {
@@ -710,6 +749,11 @@ int main(int argc, char* argv[])
                 }
                 else if (sscanf(line, "smoothIterations=%d", &vi) == 1)   { opt_smooth_iterations = vi; }
                 else if (sscanf(line, "smoothRings=%d", &vi) == 1)        { opt_smooth_rings = vi; }
+                else if (sscanf(line, "relaxWireframe=%d", &vi) == 1)
+                {
+                    if (vi) { opt_relax_wireframe = true; }
+                }
+                else if (sscanf(line, "relaxIterations=%d", &vi) == 1)    { opt_relax_iterations = vi; }
             }
             fclose(cf);
 
@@ -757,6 +801,14 @@ int main(int argc, char* argv[])
         else if (a == "--smooth-only")
         {
             opt_smooth_only = true;
+        }
+        else if (a == "--relax-wireframe")
+        {
+            opt_relax_wireframe = true;
+        }
+        else if (a == "--relax-iterations" && i + 1 < argc)
+        {
+            opt_relax_iterations = std::atoi(argv[++i]);
         }
         else if (!a.empty() && a[0] != '-')
         {
@@ -897,6 +949,59 @@ int main(int argc, char* argv[])
                   << mesh.number_of_faces() << " faces -> " << out_path << std::endl;
         write_progress(1.0f);
         std::cout << "SUCCESS (smooth open edges)" << std::endl;
+        pause_if_needed();
+        return 0;
+    }
+
+    if (opt_relax_wireframe)
+    {
+        relax_wireframe(mesh, opt_relax_iterations);
+
+        std::ofstream out(out_path);
+        if (!out)
+        {
+            std::cerr << "ERROR: Cannot open OBJ for write: " << out_path << std::endl;
+            pause_if_needed();
+            return 1;
+        }
+        out << "# ZMeshMend relax wireframe\n";
+        out << std::fixed << std::setprecision(6);
+        std::map<Mesh::Vertex_index, std::size_t> vidx;
+        std::size_t vcount = 0;
+        for (auto v : mesh.vertices())
+        {
+            const auto& p = mesh.point(v);
+            out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
+            vidx[v] = ++vcount;
+        }
+        std::vector<std::string> orig_groups;
+        {
+            std::ifstream gs(in_path);
+            std::string line, cur = "orig";
+            while (std::getline(gs, line))
+            {
+                if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
+                    cur = line.substr(2);
+                else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
+                    orig_groups.push_back(cur);
+            }
+        }
+        std::string last_g;
+        for (auto f : mesh.faces())
+        {
+            size_t fidx = (size_t)f;
+            std::string gname = (fidx < orig_groups.size()) ? orig_groups[fidx] : "orig";
+            if (gname != last_g) { out << "g " << gname << '\n'; last_g = gname; }
+            out << 'f';
+            auto h0 = mesh.halfedge(f);
+            auto h = h0;
+            do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
+            out << '\n';
+        }
+        std::cout << "Relax wireframe: " << vcount << " vertices, "
+                  << mesh.number_of_faces() << " faces -> " << out_path << std::endl;
+        write_progress(1.0f);
+        std::cout << "SUCCESS (relax wireframe)" << std::endl;
         pause_if_needed();
         return 0;
     }
