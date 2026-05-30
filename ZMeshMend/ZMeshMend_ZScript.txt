@@ -37,6 +37,8 @@
 [VarDef,gRemoveFrag,1]//removeSmallFragments switch (0/1)
 [VarDef,gMinFrac,0.01]//fragmentMinFraction (0.0-0.5)
 [VarDef,gMinFaces,50]//fragmentMinFaces (1-500)
+[VarDef,gSmoothIter,2]//smoothIterations (1-20)
+[VarDef,gSmoothRings,3]//smoothRings (1-20)
 
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -97,7 +99,7 @@
 	//so PolyGroups are preserved on import.
 	[VarSet,impPath,[StrMerge,dataDir,impName]]
 	[VarSet,batPath,[StrMerge,dataDir,"zmeshmend_run.bat"]]
-	[VarSet,configPath,[StrMerge,scriptDir,"ZMeshMend_config.txt"]]
+	[VarSet,configPath,[StrMerge,dataDir,"zmeshmend_config.txt"]]
 ]
 
 
@@ -125,7 +127,8 @@
 ]
 
 
-//Save current settings to ZMeshMend_config.txt
+//Save current settings to zmeshmend_config.txt using atomic temp+rename.
+//Writes to a temp file first, then renames to avoid partial/stale reads.
 [RoutineDef, SaveConfig,
 	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration",nl,"# Edit values as needed.",nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of mask sharpen passes before grow",nl]]
@@ -137,15 +140,68 @@
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Minimum fraction of total faces to keep a fragment",nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"fragmentMinFraction=",gMinFrac,nl,nl]]
 	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Minimum absolute face count to keep a fragment",nl]]
-	[VarSet,cfgBuf,[StrMerge,cfgBuf,"fragmentMinFaces=",gMinFaces,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"fragmentMinFaces=",gMinFaces,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Smooth border mode (1=smooth only, 0=normal fill)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothBorder=0",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth iterations (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothIterations=",gSmoothIter,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Border smooth rings inward (1-20)",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl]]
 
+	//Delete temp first
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	//Write cfgBuf to temp file
 	[If,[MemGetSize,ZMM_CfgMem],
 		[MemDelete,ZMM_CfgMem]
 	]
 	[MemCreate,ZMM_CfgMem,4096,0]
 	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
-	[MemSaveToFile,ZMM_CfgMem,configPath]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
 	[MemDelete,ZMM_CfgMem]
+	//Verify temp was written, then atomically rename to config
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
+]
+
+//Save config with smoothBorder=1 enabled for standalone smooth mode.
+[RoutineDef, SaveSmoothConfig,
+	[VarSet,cfgBuf,[StrMerge,"# ZMeshMend Configuration (Smooth)",nl,"# Auto-generated for smooth operation.",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothBorder=1",nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of boundary smooth iterations",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothIterations=",gSmoothIter,nl,nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"# Number of rings to smooth inward",nl]]
+	[VarSet,cfgBuf,[StrMerge,cfgBuf,"smoothRings=",gSmoothRings,nl]]
+
+	[VarSet,tmpPath,[StrMerge,dataDir,"zmeshmend_tmp.txt"]]
+	[If,[FileExists,tmpPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#tmpPath]]
+	]
+	[If,[MemGetSize,ZMM_CfgMem],
+		[MemDelete,ZMM_CfgMem]
+	]
+	[MemCreate,ZMM_CfgMem,4096,0]
+	[MemWriteString,ZMM_CfgMem,cfgBuf,0]
+	[MemSaveToFile,ZMM_CfgMem,tmpPath]
+	[MemDelete,ZMM_CfgMem]
+	[If,[FileExists,tmpPath],
+		[If,[FileExists,configPath],
+			[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#configPath]]
+		]
+		[MemCreate,ZMM_CfgMem,256,0]
+		[MemWriteString,ZMM_CfgMem,configPath,0]
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileRename",#tmpPath,,ZMM_CfgMem]]
+		[MemDelete,ZMM_CfgMem]
+	]
 ]
 
 //Verify Edit mode with a 3D tool
@@ -187,11 +243,7 @@
 	[RoutineCall, SaveConfig]
 
 	//4. launch core.exe via ZFileUtils64.dll LaunchAppWithFile.
-	//Pattern from ZFileUtils_TestZScript_2021.txt reference:
-	//  [FileExecute,[Var,dllPath],"LaunchAppWithFile",#fullFilePath]
-	//core.exe takes zero args - reads config, processes export.obj,
-	//writes import.obj, then pauses for Enter.
-	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
 
 	//5. wait for user to confirm completion
 	[Note, [StrMerge,"CGAL is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
@@ -219,6 +271,45 @@
 [RoutineDef, RemoveFragments,
 	[VarSet,gRemoveFrag,1]
 	[RoutineCall, RunCGAL]
+]
+
+//Smooth all open boundary edge loops via Chaikin + Laplacian.
+//Writes smoothBorder=1 config so core.exe runs in smooth-only mode.
+[RoutineDef, RunSmooth,
+	[RoutineCall, CheckSystem]
+	[RoutineCall, ResolvePaths]
+	[If,[FileExists,exePath],,
+		[Note,[StrMerge,"zmeshmend_core.exe not found at:",nl,exePath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[FileNameSetNext, expPath]
+	[IPress, Tool:Export]
+
+	[If,[FileExists,expPath],,
+		[Note,[StrMerge,"Export failed. OBJ not created at:",nl,expPath],,3,4737096,,500]
+		[Exit]
+	]
+
+	[If,[FileExists,impPath],
+		[VarSet,err,[FileExecute,[Var,dllPath],"FileDelete",#impPath]]
+	]
+
+	[RoutineCall, SaveSmoothConfig]
+
+	[VarSet,err,[FileExecute,[Var,dllPath],"LaunchAppWithFile",#exePath]]
+
+	[Note, [StrMerge,"Smooth Border is processing in a console window.",nl,"Click OK after the console finishes."], , 0]
+
+	[If,[FileExists,impPath],
+		[FileNameSetNext, impPath]
+		[IPress, Tool:Import]
+		[Note, "Smooth Open Edge complete (PolyGroups preserved).", , 2]
+	,
+		[Note,[StrMerge,"Smooth output not found at:",nl,impPath],,3,4737096,,500]
+	]
+
+	[RoutineCall, SaveConfig]
 ]
 
 
@@ -273,9 +364,22 @@
 ,,1]//end button
 
 
+//~~~Smooth Open Edge (CGAL Chaikin + Laplacian, topology-preserving)~~~
+[IButton,"ZPlugin:ZMeshMend:Smooth Open Edge","Chaikin smooth open border loops; topology & PolyGroups preserved.",
+	[RoutineCall, CheckEdit]
+	[RoutineCall, RunSmooth]
+	[Note,"Smooth Open Edge complete!",,2]
+,,1]//end button
+
+
 //~~~About~~~
 [IButton,"ZPlugin:ZMeshMend:About ZMeshMend","Show plugin information and version.",
-	[Note,[StrMerge,"ZMeshMend ZScript v1.0.0",nl,nl,"Core Features:",nl,"  1. Auto-close all holes",nl,"  2. CGAL curvature-aware fill"],,4737096,,500]
+	[Note,[StrMerge,"ZMeshMend ZScript v1.1.0",nl,nl,
+		"1. CGAL curvature-aware fill + PolyGroup",nl,
+		"2. Mask-driven cleanup",nl,
+		"3. Small fragment removal",nl,
+		"4. Smooth open edges",nl,
+		"5. ZBrush Close Holes fallback"],,4737096,,500]
 ,,1]//end button
 
 
@@ -288,7 +392,6 @@
 	[RoutineCall, ResolvePaths]
 	[RoutineCall, SaveConfig]
 ,,1]
-
 [ISlider,"ZPlugin:ZMeshMend:Settings:Mask Grow Rings",1,1,0,5,
 	"Rings to grow mask before deletion (0-5).",
 	[VarSet,gRings,[IGet,"ZPlugin:ZMeshMend:Settings:Mask Grow Rings"]]
@@ -313,6 +416,20 @@
 [ISlider,"ZPlugin:ZMeshMend:Settings:Fragment Min Faces",50,1,1,500,
 	"Minimum absolute face count for a fragment to be kept.",
 	[VarSet,gMinFaces,[IGet,"ZPlugin:ZMeshMend:Settings:Fragment Min Faces"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Smooth Iterations",2,1,1,20,
+	"Number of Chaikin smooth passes on border (1-20).",
+	[VarSet,gSmoothIter,[IGet,"ZPlugin:ZMeshMend:Settings:Smooth Iterations"]]
+	[RoutineCall, ResolvePaths]
+	[RoutineCall, SaveConfig]
+,,1]
+
+[ISlider,"ZPlugin:ZMeshMend:Settings:Smooth Rings",3,1,1,20,
+	"Number of rings to smooth inward from border (1-20).",
+	[VarSet,gSmoothRings,[IGet,"ZPlugin:ZMeshMend:Settings:Smooth Rings"]]
 	[RoutineCall, ResolvePaths]
 	[RoutineCall, SaveConfig]
 ,,1]

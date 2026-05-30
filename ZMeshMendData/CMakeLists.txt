@@ -20,7 +20,7 @@ target_link_libraries(zmeshmend_core PRIVATE CGAL::CGAL Eigen3::Eigen)
 
 if(MSVC)
     target_link_libraries(zmeshmend_core PRIVATE psapi)
-    target_compile_options(zmeshmend_core PRIVATE /W3 /O2)
+    target_compile_options(zmeshmend_core PRIVATE /W3 /O2 /utf-8)
     set_target_properties(zmeshmend_core PROPERTIES
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
     )

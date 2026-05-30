@@ -15,3 +15,9 @@ maskGrowRings=1
 
 # Number of mask sharpen passes before grow
 maskSharpenPasses=1
+
+# Number of boundary smooth Chaikin iterations (1-20)
+smoothIterations=2
+
+# Number of rings to smooth inward from border (1-20)
+smoothRings=3

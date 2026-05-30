@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <unordered_set>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 #ifdef _WIN32
@@ -55,6 +56,7 @@
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
 typedef Kernel::Point_3                                          Point;
+typedef Kernel::Vector_3                                         Vector;
 typedef CGAL::Surface_mesh<Point>                                Mesh;
 
 namespace PMP = CGAL::Polygon_mesh_processing;
@@ -79,6 +81,265 @@ static void pause_if_needed()
     std::cout.flush();
     std::cin.get();
 }
+
+// ============================================================================
+// 边界平滑：仅对开放边界环及其向内 N 圈邻域做位移平滑。
+//   Ring 0 (边界) ── Chaikin 切线方向平滑，权重 1.0
+//   Ring 1..N    ── Laplacian 邻域平均，权重 0.5^ring
+// 平滑位移在叠加后做法线切平面投影，仅允许沿表面滑动，保持洞口体积。
+// 不增删顶点/面，PolyGroup 完全保留。
+// ============================================================================
+
+// 提取所有开放边界环（每环只保留一个 seed halfedge）。
+static std::vector<Mesh::Halfedge_index>
+extract_border_seeds(const Mesh& mesh)
+{
+    std::vector<Mesh::Halfedge_index> all;
+    PMP::extract_boundary_cycles(mesh, std::back_inserter(all));
+
+    std::vector<Mesh::Halfedge_index> seeds;
+    for (auto h : all)
+    {
+        if (!CGAL::is_border(h, mesh))
+            continue;
+
+        bool dup = false;
+        for (auto e : seeds)
+        {
+            Mesh::Halfedge_index cur = e;
+            do {
+                if (cur == h) { dup = true; break; }
+                cur = mesh.next(cur);
+            } while (cur != e);
+            if (dup) break;
+        }
+        if (!dup) seeds.push_back(h);
+    }
+    return seeds;
+}
+
+// 沿边界环收集顶点序列（按 next() 方向）。
+static std::vector<Mesh::Vertex_index>
+collect_border_loop(const Mesh& mesh, Mesh::Halfedge_index seed)
+{
+    std::vector<Mesh::Vertex_index> loop;
+    Mesh::Halfedge_index h = seed;
+    do {
+        loop.push_back(mesh.target(h));
+        h = mesh.next(h);
+    } while (h != seed);
+    return loop;
+}
+
+// 从已有顶点集合 BFS 扩展一圈（仅取尚未访问过的邻居）。
+static std::vector<Mesh::Vertex_index>
+expand_one_ring(const Mesh& mesh,
+                const std::vector<Mesh::Vertex_index>& src,
+                std::unordered_set<std::size_t>& visited)
+{
+    std::vector<Mesh::Vertex_index> next;
+    for (auto v : src)
+    {
+        Mesh::Halfedge_index h0 = mesh.halfedge(v);
+        if (h0 == Mesh::null_halfedge()) continue;
+        Mesh::Halfedge_index h = h0;
+        do {
+            Mesh::Vertex_index nb = mesh.source(h);
+            if (visited.insert(static_cast<std::size_t>(nb)).second)
+                next.push_back(nb);
+            h = mesh.next(mesh.opposite(h));
+        } while (h != h0);
+    }
+    return next;
+}
+
+// 计算顶点处邻接面的平均法线（面积加权）。
+static Vector
+vertex_normal(const Mesh& mesh, Mesh::Vertex_index v)
+{
+    Vector n(0.0, 0.0, 0.0);
+    Mesh::Halfedge_index h0 = mesh.halfedge(v);
+    if (h0 == Mesh::null_halfedge()) return n;
+    Mesh::Halfedge_index h = h0;
+    do {
+        Mesh::Face_index f = mesh.face(h);
+        if (f != Mesh::null_face())
+        {
+            auto a = mesh.point(mesh.source(h));
+            auto b = mesh.point(mesh.target(h));
+            auto c = mesh.point(mesh.target(mesh.next(h)));
+            Vector fn = CGAL::cross_product(b - a, c - a);
+            n = n + fn;
+        }
+        h = mesh.next(mesh.opposite(h));
+    } while (h != h0);
+
+    double len = std::sqrt(n.squared_length());
+    if (len > 1e-20) n = n / len;
+    return n;
+}
+
+// Chaikin 变体：Vi' = 0.25*V_{i-1} + 0.5*Vi + 0.25*V_{i+1}（闭合环）。
+// 迭代 iterations 次。
+static std::vector<Point>
+chaikin_smooth_loop(const std::vector<Point>& pts, int iterations)
+{
+    std::vector<Point> cur = pts;
+    const std::size_t n = cur.size();
+    if (n < 3) return cur;
+
+    std::vector<Point> nxt(n);
+    for (int it = 0; it < iterations; ++it)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const Point& pp = cur[(i + n - 1) % n];
+            const Point& pi = cur[i];
+            const Point& pn = cur[(i + 1) % n];
+            double x = 0.25 * pp.x() + 0.5 * pi.x() + 0.25 * pn.x();
+            double y = 0.25 * pp.y() + 0.5 * pi.y() + 0.25 * pn.y();
+            double z = 0.25 * pp.z() + 0.5 * pi.z() + 0.25 * pn.z();
+            nxt[i] = Point(x, y, z);
+        }
+        cur.swap(nxt);
+    }
+    return cur;
+}
+
+// Laplacian 平滑：对一组顶点取邻域平均位置（一次迭代）。
+// 使用当前 mesh 中的位置作为邻居参考，不修改 mesh。
+static std::vector<Point>
+laplacian_smooth_ring(const Mesh& mesh,
+                      const std::vector<Mesh::Vertex_index>& ring,
+                      int iterations)
+{
+    std::vector<Point> cur(ring.size());
+    for (std::size_t i = 0; i < ring.size(); ++i)
+        cur[i] = mesh.point(ring[i]);
+
+    std::vector<Point> nxt = cur;
+    for (int it = 0; it < iterations; ++it)
+    {
+        for (std::size_t i = 0; i < ring.size(); ++i)
+        {
+            Mesh::Vertex_index v = ring[i];
+            Mesh::Halfedge_index h0 = mesh.halfedge(v);
+            if (h0 == Mesh::null_halfedge()) { nxt[i] = cur[i]; continue; }
+
+            double sx = 0, sy = 0, sz = 0;
+            int cnt = 0;
+            Mesh::Halfedge_index h = h0;
+            do {
+                const Point& p = mesh.point(mesh.source(h));
+                sx += p.x(); sy += p.y(); sz += p.z();
+                ++cnt;
+                h = mesh.next(mesh.opposite(h));
+            } while (h != h0);
+
+            if (cnt > 0)
+                nxt[i] = Point(sx / cnt, sy / cnt, sz / cnt);
+            else
+                nxt[i] = cur[i];
+        }
+        cur.swap(nxt);
+    }
+    return cur;
+}
+
+// 沿法线方向投影到 original 所在的切平面，消除法线分量偏移。
+static Point
+project_to_tangent_plane(const Point& displaced,
+                         const Point& original,
+                         const Vector& normal)
+{
+    Vector off = displaced - original;
+    double d = off * normal;
+    return Point(displaced.x() - d * normal.x(),
+                 displaced.y() - d * normal.y(),
+                 displaced.z() - d * normal.z());
+}
+
+// 主入口：平滑所有开放边界环及向内 num_rings 圈邻域。
+static void
+smooth_open_borders(Mesh& mesh, int iterations, int num_rings)
+{
+    if (iterations <= 0) return;
+    if (num_rings < 1) num_rings = 1;
+
+    auto seeds = extract_border_seeds(mesh);
+    if (seeds.empty())
+    {
+        std::cout << "Smooth: no open boundaries found." << std::endl;
+        return;
+    }
+
+    std::cout << "Smooth: found " << seeds.size() << " border loop(s), "
+              << "iterations=" << iterations << ", rings=" << num_rings << std::endl;
+
+    std::size_t total_moved = 0;
+
+    for (std::size_t li = 0; li < seeds.size(); ++li)
+    {
+        auto loop = collect_border_loop(mesh, seeds[li]);
+        if (loop.size() < 3) continue;
+
+        // 1. 收集每圈顶点（vector<ring> with ring[0] = border loop）
+        std::vector<std::vector<Mesh::Vertex_index>> rings;
+        rings.push_back(loop);
+
+        std::unordered_set<std::size_t> visited;
+        for (auto v : loop) visited.insert(static_cast<std::size_t>(v));
+
+        for (int r = 1; r <= num_rings; ++r)
+        {
+            auto next = expand_one_ring(mesh, rings.back(), visited);
+            if (next.empty()) break;
+            rings.push_back(next);
+        }
+
+        // 2. 保存每圈的原始位置和法线
+        std::vector<std::vector<Point>>  orig_rings(rings.size());
+        std::vector<std::vector<Vector>> normal_rings(rings.size());
+        for (std::size_t r = 0; r < rings.size(); ++r)
+        {
+            orig_rings[r].resize(rings[r].size());
+            normal_rings[r].resize(rings[r].size());
+            for (std::size_t i = 0; i < rings[r].size(); ++i)
+            {
+                orig_rings[r][i] = mesh.point(rings[r][i]);
+                normal_rings[r][i] = vertex_normal(mesh, rings[r][i]);
+            }
+        }
+
+        // 3. 计算每圈的平滑目标位置
+        std::vector<std::vector<Point>> smoothed(rings.size());
+        smoothed[0] = chaikin_smooth_loop(orig_rings[0], iterations);
+        for (std::size_t r = 1; r < rings.size(); ++r)
+            smoothed[r] = laplacian_smooth_ring(mesh, rings[r], iterations);
+
+        // 4. 加权位移 + 切平面投影
+        for (std::size_t r = 0; r < rings.size(); ++r)
+        {
+            double weight = std::pow(0.5, static_cast<double>(r));
+            for (std::size_t i = 0; i < rings[r].size(); ++i)
+            {
+                const Point& orig = orig_rings[r][i];
+                const Point& sm   = smoothed[r][i];
+                Vector disp(sm.x() - orig.x(), sm.y() - orig.y(), sm.z() - orig.z());
+                Point displaced(orig.x() + disp.x() * weight,
+                                orig.y() + disp.y() * weight,
+                                orig.z() + disp.z() * weight);
+                Point projected = project_to_tangent_plane(displaced, orig, normal_rings[r][i]);
+                mesh.point(rings[r][i]) = projected;
+                ++total_moved;
+            }
+        }
+    }
+
+    std::cout << "Smooth: moved " << total_moved << " vertex position(s)." << std::endl;
+}
+
+// ============================================================================
 
 static bool load_goz_to_cgal(GoZ_Mesh& goz, Mesh& mesh,
                               std::vector<int>& face_to_goz_face,
@@ -396,6 +657,10 @@ int main(int argc, char* argv[])
     double opt_min_frac  = 0.0;
     int    opt_min_faces = 0;
     bool   opt_full_obj  = false;
+    bool   opt_smooth_border     = false;
+    int    opt_smooth_iterations = 2;
+    int    opt_smooth_rings      = 3;
+    bool   opt_smooth_only       = false;
 
     if (argc < 3)
     {
@@ -439,6 +704,12 @@ int main(int argc, char* argv[])
                 }
                 else if (sscanf(line, "fragmentMinFraction=%f", &vf) == 1) { opt_min_frac = vf; }
                 else if (sscanf(line, "fragmentMinFaces=%d", &vi) == 1)   { opt_min_faces = vi; }
+                else if (sscanf(line, "smoothBorder=%d", &vi) == 1)
+                {
+                    if (vi) { opt_smooth_border = true; opt_smooth_only = true; }
+                }
+                else if (sscanf(line, "smoothIterations=%d", &vi) == 1)   { opt_smooth_iterations = vi; }
+                else if (sscanf(line, "smoothRings=%d", &vi) == 1)        { opt_smooth_rings = vi; }
             }
             fclose(cf);
 
@@ -470,6 +741,22 @@ int main(int argc, char* argv[])
         else if (a == "--full-obj")
         {
             opt_full_obj = true;
+        }
+        else if (a == "--smooth-border")
+        {
+            opt_smooth_border = true;
+        }
+        else if (a == "--smooth-iterations" && i + 1 < argc)
+        {
+            opt_smooth_iterations = std::atoi(argv[++i]);
+        }
+        else if (a == "--smooth-rings" && i + 1 < argc)
+        {
+            opt_smooth_rings = std::atoi(argv[++i]);
+        }
+        else if (a == "--smooth-only")
+        {
+            opt_smooth_only = true;
         }
         else if (!a.empty() && a[0] != '-')
         {
@@ -547,7 +834,7 @@ int main(int argc, char* argv[])
         }
         std::cout << "OBJ Input: " << mesh.number_of_vertices() << " vertices, "
                   << mesh.number_of_faces() << " faces" << std::endl;
-        if (!CGAL::is_triangle_mesh(mesh))
+        if (!opt_smooth_only && !CGAL::is_triangle_mesh(mesh))
         {
             std::cout << "Triangulating non-triangle faces..." << std::endl;
             PMP::triangulate_faces(mesh);
@@ -558,6 +845,61 @@ int main(int argc, char* argv[])
 
     std::cout << "CGAL mesh: " << mesh.number_of_vertices() << " vertices, "
               << mesh.number_of_faces() << " faces" << std::endl;
+
+    if (opt_smooth_border)
+    {
+        smooth_open_borders(mesh, opt_smooth_iterations, opt_smooth_rings);
+    }
+
+    if (opt_smooth_only)
+    {
+        std::ofstream out(out_path);
+        if (!out)
+        {
+            std::cerr << "ERROR: Cannot open OBJ for write: " << out_path << std::endl;
+            pause_if_needed();
+            return 1;
+        }
+        out << "# ZMeshMend smooth open edges\n";
+        std::map<Mesh::Vertex_index, std::size_t> vidx;
+        std::size_t vcount = 0;
+        for (auto v : mesh.vertices())
+        {
+            const auto& p = mesh.point(v);
+            out << "v " << p.x() << ' ' << p.y() << ' ' << p.z() << '\n';
+            vidx[v] = ++vcount;
+        }
+        std::vector<std::string> orig_groups;
+        {
+            std::ifstream gs(in_path);
+            std::string line, cur = "orig";
+            while (std::getline(gs, line))
+            {
+                if (!line.empty() && line[0] == 'g' && line.size() > 1 && line[1] == ' ')
+                    cur = line.substr(2);
+                else if (!line.empty() && line[0] == 'f' && line.size() > 1 && line[1] == ' ')
+                    orig_groups.push_back(cur);
+            }
+        }
+        std::string last_g;
+        for (auto f : mesh.faces())
+        {
+            size_t fidx = (size_t)f;
+            std::string gname = (fidx < orig_groups.size()) ? orig_groups[fidx] : "orig";
+            if (gname != last_g) { out << "g " << gname << '\n'; last_g = gname; }
+            out << 'f';
+            auto h0 = mesh.halfedge(f);
+            auto h = h0;
+            do { out << ' ' << vidx[mesh.target(h)]; h = mesh.next(h); } while (h != h0);
+            out << '\n';
+        }
+        std::cout << "Smooth only: " << vcount << " vertices, "
+                  << mesh.number_of_faces() << " faces -> " << out_path << std::endl;
+        write_progress(1.0f);
+        std::cout << "SUCCESS (smooth open edges)" << std::endl;
+        pause_if_needed();
+        return 0;
+    }
 
     bool has_boundary = !CGAL::is_closed(mesh);
     std::cout << "Has border edges: " << (has_boundary ? "yes" : "no") << std::endl;
@@ -732,8 +1074,7 @@ int main(int argc, char* argv[])
 
         Mesh::size_type fc_before = mesh.number_of_faces();
 
-        auto result = PMP::triangulate_refine_and_fair_hole(mesh, h);
-        bool ok = std::get<0>(result);
+        auto [ok, fo, vo] = PMP::triangulate_refine_and_fair_hole(mesh, h);
 
         Mesh::size_type fc_after = mesh.number_of_faces();
         int added = static_cast<int>(fc_after - fc_before);
